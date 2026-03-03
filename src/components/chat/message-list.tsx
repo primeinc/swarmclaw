@@ -6,7 +6,6 @@ import { useChatStore } from '@/stores/use-chat-store'
 import { useAppStore } from '@/stores/use-app-store'
 import { api } from '@/lib/api-client'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
-import { ConnectorPlatformIcon, CONNECTOR_PLATFORM_META } from '@/components/shared/connector-platform-icon'
 import { MessageBubble } from './message-bubble'
 import { StreamingBubble } from './streaming-bubble'
 import { ThinkingIndicator } from './thinking-indicator'
@@ -47,9 +46,10 @@ function dateSeparator(ts: number): string {
 interface Props {
   messages: Message[]
   streaming: boolean
+  connectorFilter?: string | null
 }
 
-export function MessageList({ messages, streaming }: Props) {
+export function MessageList({ messages, streaming, connectorFilter = null }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const snapUntilRef = useRef(0)
@@ -119,9 +119,7 @@ export function MessageList({ messages, streaming }: Props) {
   // Bookmark filter
   const [bookmarkFilter, setBookmarkFilter] = useState(false)
 
-  // Connector source filter
-  const [connectorFilter, setConnectorFilter] = useState<string | null>(null)
-  const [connectorFilterCollapsed, setConnectorFilterCollapsed] = useState(false)
+  // Connector filtering is handled via connectorFilter prop from chat-area
 
   const toggleBookmark = useCallback(async (index: number) => {
     if (!sessionId) return
@@ -178,17 +176,6 @@ export function MessageList({ messages, streaming }: Props) {
       displayedMessages[displayedMessages.length - 1] = msg
     } else {
       displayedMessages.push(msg)
-    }
-  }
-
-  // Collect unique connector sources for filter UI
-  const connectorSources = new Map<string, { platform: string; connectorName: string }>()
-  for (const msg of displayedMessages) {
-    if (msg.source?.connectorId && !connectorSources.has(msg.source.connectorId)) {
-      connectorSources.set(msg.source.connectorId, {
-        platform: msg.source.platform,
-        connectorName: msg.source.connectorName,
-      })
     }
   }
 
@@ -404,61 +391,6 @@ export function MessageList({ messages, streaming }: Props) {
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
-        </div>
-      )}
-
-      {/* Connector source filter — shown when connector messages exist */}
-      {connectorSources.size > 0 && (
-        <div className="flex items-center gap-1.5 px-6 md:px-12 lg:px-16 py-1.5 border-b border-white/[0.04]">
-          <button
-            onClick={() => setConnectorFilterCollapsed((c) => !c)}
-            className="flex items-center gap-1 text-[10px] text-text-3/50 uppercase tracking-wider font-600 mr-1 bg-transparent border-none cursor-pointer hover:text-text-3/70 transition-colors p-0"
-            title={connectorFilterCollapsed ? 'Expand source filter' : 'Collapse source filter'}
-          >
-            <svg
-              width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
-              className="transition-transform duration-200"
-              style={{ transform: connectorFilterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-            Source
-            {connectorFilterCollapsed && connectorFilter && (
-              <span className="text-accent-bright/70 normal-case tracking-normal">
-                ({connectorSources.get(connectorFilter)?.connectorName || connectorFilter})
-              </span>
-            )}
-          </button>
-          {!connectorFilterCollapsed && (
-            <>
-              <button
-                onClick={() => setConnectorFilter(null)}
-                className={`px-2 py-1 rounded-[6px] text-[11px] font-600 cursor-pointer border-none transition-all ${
-                  !connectorFilter ? 'bg-accent-soft text-accent-bright' : 'bg-transparent text-text-3 hover:text-text-2 hover:bg-white/[0.04]'
-                }`}
-                style={{ fontFamily: 'inherit' }}
-              >
-                All
-              </button>
-              {Array.from(connectorSources.entries()).map(([cid, info]) => {
-                const active = connectorFilter === cid
-                const meta = CONNECTOR_PLATFORM_META[info.platform as keyof typeof CONNECTOR_PLATFORM_META]
-                return (
-                  <button
-                    key={cid}
-                    onClick={() => setConnectorFilter(active ? null : cid)}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded-[6px] text-[11px] font-600 cursor-pointer border-none transition-all ${
-                      active ? 'bg-accent-soft text-accent-bright' : 'bg-transparent text-text-3 hover:text-text-2 hover:bg-white/[0.04]'
-                    }`}
-                    style={{ fontFamily: 'inherit' }}
-                  >
-                    <ConnectorPlatformIcon platform={info.platform as keyof typeof CONNECTOR_PLATFORM_META} size={12} />
-                    {info.connectorName || meta?.label || info.platform}
-                  </button>
-                )
-              })}
-            </>
-          )}
         </div>
       )}
 

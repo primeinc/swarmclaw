@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback, useState, useRef } from 'react'
+import { useEffect, useCallback, useState, useRef, useMemo } from 'react'
 import { useAppStore } from '@/stores/use-app-store'
 import { useWs } from '@/hooks/use-ws'
 import { useChatStore } from '@/stores/use-chat-store'
@@ -65,6 +65,26 @@ export function ChatArea() {
   const [browserActive, setBrowserActive] = useState(false)
   const [heartbeatHistoryOpen, setHeartbeatHistoryOpen] = useState(false)
   const [messagesLoading, setMessagesLoading] = useState(true)
+  const [connectorFilter, setConnectorFilter] = useState<string | null>(null)
+
+  // Collect unique connector sources from messages for filter UI
+  const { connectorSources, hasDirectMessages } = useMemo(() => {
+    const sources = new Map<string, { platform: string; connectorName: string }>()
+    let hasDirect = false
+    for (const msg of messages) {
+      if (msg.source?.connectorId && !sources.has(msg.source.connectorId)) {
+        sources.set(msg.source.connectorId, {
+          platform: msg.source.platform,
+          connectorName: msg.source.connectorName,
+        })
+      } else if (!msg.source?.connectorId && msg.role === 'user') {
+        hasDirect = true
+      }
+    }
+    return { connectorSources: sources, hasDirectMessages: hasDirect }
+  }, [messages])
+  // Show source filter when there are genuinely multiple sources (2+ connectors, or connector + direct)
+  const hasMultipleSources = connectorSources.size > 1 || (connectorSources.size > 0 && hasDirectMessages)
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
   const setPendingImage = useChatStore((s) => s.setPendingImage)
@@ -277,6 +297,10 @@ export function ChatArea() {
           onVoiceToggle={handleVoiceToggle}
           heartbeatHistoryOpen={heartbeatHistoryOpen}
           onToggleHeartbeatHistory={() => setHeartbeatHistoryOpen((v) => !v)}
+          connectorSources={connectorSources}
+          connectorFilter={connectorFilter}
+          onConnectorFilterChange={setConnectorFilter}
+          hasMultipleSources={hasMultipleSources}
         />
       )}
       {!isDesktop && (
@@ -291,6 +315,10 @@ export function ChatArea() {
           voiceActive={voice.active}
           voiceSupported={voice.supported}
           onVoiceToggle={handleVoiceToggle}
+          connectorSources={connectorSources}
+          connectorFilter={connectorFilter}
+          onConnectorFilterChange={setConnectorFilter}
+          hasMultipleSources={hasMultipleSources}
         />
       )}
       <DevServerBar status={devServerStatus} onStop={handleStopDevServer} />
@@ -356,7 +384,7 @@ export function ChatArea() {
           </div>
         </div>
       ) : (
-        <MessageList messages={messages} streaming={streamingForThisSession} />
+        <MessageList messages={messages} streaming={streamingForThisSession} connectorFilter={connectorFilter} />
       )}
 
       {voice.active && (

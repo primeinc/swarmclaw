@@ -53,9 +53,13 @@ interface Props {
   voiceSupported?: boolean
   heartbeatHistoryOpen?: boolean
   onToggleHeartbeatHistory?: () => void
+  connectorSources?: Map<string, { platform: string; connectorName: string }>
+  connectorFilter?: string | null
+  onConnectorFilterChange?: (filter: string | null) => void
+  hasMultipleSources?: boolean
 }
 
-export function ChatHeader({ session, streaming, onStop, onMenuToggle, onBack, mobile, browserActive, onStopBrowser, onVoiceToggle, voiceActive, voiceSupported, heartbeatHistoryOpen, onToggleHeartbeatHistory }: Props) {
+export function ChatHeader({ session, streaming, onStop, onMenuToggle, onBack, mobile, browserActive, onStopBrowser, onVoiceToggle, voiceActive, voiceSupported, heartbeatHistoryOpen, onToggleHeartbeatHistory, connectorSources, connectorFilter, onConnectorFilterChange, hasMultipleSources }: Props) {
   const ttsEnabled = useChatStore((s) => s.ttsEnabled)
   const toggleTts = useChatStore((s) => s.toggleTts)
   const soundEnabled = useChatStore((s) => s.soundEnabled)
@@ -89,6 +93,8 @@ export function ChatHeader({ session, streaming, onStop, onMenuToggle, onBack, m
   const [heartbeatSaving, setHeartbeatSaving] = useState(false)
   const [hbDropdownOpen, setHbDropdownOpen] = useState(false)
   const hbDropdownRef = useRef<HTMLDivElement>(null)
+  const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false)
+  const sourceDropdownRef = useRef<HTMLDivElement>(null)
   const [mainLoopSaving, setMainLoopSaving] = useState(false)
   const [mainLoopError, setMainLoopError] = useState('')
   const [mainLoopNotice, setMainLoopNotice] = useState('')
@@ -400,6 +406,15 @@ export function ChatHeader({ session, streaming, onStop, onMenuToggle, onBack, m
   }, [hbDropdownOpen])
 
   useEffect(() => {
+    if (!sourceDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) setSourceDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [sourceDropdownOpen])
+
+  useEffect(() => {
     if (!modelSwitcherOpen) return
     const handler = (e: MouseEvent) => {
       if (modelSwitcherRef.current && !modelSwitcherRef.current.contains(e.target as Node)) setModelSwitcherOpen(false)
@@ -439,10 +454,11 @@ export function ChatHeader({ session, streaming, onStop, onMenuToggle, onBack, m
     return () => clearTimeout(timer)
   }, [mainLoopNotice])
 
-  // Context bar shows for tools, mission controls, memories, task links, resume handles, browser
+  // Context bar shows for tools, mission controls, memories, source filter, task links, resume handles, browser
   const hasToolToggles = ((agent?.tools?.length ?? 0) > 0) || ((session.tools?.length ?? 0) > 0)
   const hasMemoryLink = !!(agent && session.tools?.includes('memory'))
-  const hasContextBar = !!(hasToolToggles || isMainSession || hasMemoryLink || linkedTask || resumeHandle || (isOpenClawAgent && openclawSessionKey) || browserActive)
+  const hasSourceFilter = !!hasMultipleSources
+  const hasContextBar = !!(hasToolToggles || isMainSession || hasMemoryLink || hasSourceFilter || linkedTask || resumeHandle || (isOpenClawAgent && openclawSessionKey) || browserActive)
 
   return (
     <header
@@ -862,6 +878,57 @@ export function ChatHeader({ session, streaming, onStop, onMenuToggle, onBack, m
               </svg>
               Memories
             </button>
+          )}
+          {hasSourceFilter && onConnectorFilterChange && connectorSources && (
+            <div className="relative shrink-0" ref={sourceDropdownRef}>
+              <button
+                onClick={() => setSourceDropdownOpen((o) => !o)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-[7px] transition-colors cursor-pointer border-none text-[10px] font-600 shrink-0 ${
+                  connectorFilter
+                    ? 'bg-accent-soft/60 text-accent-bright/80 hover:bg-accent-soft'
+                    : 'bg-white/[0.03] text-text-3/50 hover:bg-white/[0.06] hover:text-text-3/70'
+                }`}
+                title="Filter by message source"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                {connectorFilter
+                  ? (connectorSources.get(connectorFilter)?.connectorName || 'Source')
+                  : 'Source'}
+                <svg width="7" height="7" viewBox="0 0 16 16" fill="none" className="opacity-40">
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+              {sourceDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 py-1 rounded-[10px] border border-white/[0.06] bg-bg/95 backdrop-blur-md shadow-lg z-50 min-w-[140px]">
+                  <button
+                    onClick={() => { onConnectorFilterChange(null); setSourceDropdownOpen(false) }}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] font-600 transition-colors cursor-pointer border-none flex items-center gap-2 ${
+                      !connectorFilter ? 'bg-accent-soft text-accent-bright' : 'text-text-3 hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    All Sources
+                  </button>
+                  {Array.from(connectorSources.entries()).map(([cid, info]) => {
+                    const active = connectorFilter === cid
+                    const meta = CONNECTOR_PLATFORM_META[info.platform as keyof typeof CONNECTOR_PLATFORM_META]
+                    return (
+                      <button
+                        key={cid}
+                        onClick={() => { onConnectorFilterChange(active ? null : cid); setSourceDropdownOpen(false) }}
+                        className={`w-full text-left px-3 py-1.5 text-[11px] font-600 transition-colors cursor-pointer border-none flex items-center gap-2 ${
+                          active ? 'bg-accent-soft text-accent-bright' : 'text-text-3 hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        <ConnectorPlatformIcon platform={info.platform as keyof typeof CONNECTOR_PLATFORM_META} size={12} />
+                        {info.connectorName || meta?.label || info.platform}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           )}
           {isOpenClawAgent && openclawSessionKey && (
             <>
