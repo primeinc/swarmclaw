@@ -1,7 +1,7 @@
 # SwarmClaw
 
 [![CI](https://github.com/swarmclawai/swarmclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/swarmclawai/swarmclaw/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/swarmclawai/swarmclaw?sort=date)](https://github.com/swarmclawai/swarmclaw/releases)
+[![Release](https://img.shields.io/github/v/tag/swarmclawai/swarmclaw)](https://github.com/swarmclawai/swarmclaw/releases)
 [![npm](https://img.shields.io/npm/v/%40swarmclawai%2Fswarmclaw?label=npm)](https://www.npmjs.com/package/@swarmclawai/swarmclaw)
 
 <p align="center">
