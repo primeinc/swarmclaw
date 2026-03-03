@@ -8,7 +8,7 @@
   <img src="https://raw.githubusercontent.com/swarmclawai/swarmclaw/main/public/branding/swarmclaw-org-avatar.png" alt="SwarmClaw lobster logo" width="120" />
 </p>
 
-Self-hosted AI agent orchestration dashboard. Manage multiple AI providers, orchestrate agent swarms, schedule tasks, and bridge agents to chat platforms — all from a single mobile-friendly interface.
+The orchestration dashboard for OpenClaw. Manage a swarm of OpenClaws + 14 other AI providers, orchestrate LangGraph workflows, schedule tasks, and bridge agents to 10+ chat platforms — all from one self-hosted UI.
 
 Inspired by [OpenClaw](https://github.com/openclaw).
 
@@ -17,6 +17,48 @@ Inspired by [OpenClaw](https://github.com/openclaw).
 ![Dashboard](public/screenshots/dashboard.png)
 ![Agent Builder](public/screenshots/agents.png)
 ![Task Board](public/screenshots/tasks.png)
+
+## Why SwarmClaw?
+
+OpenClaw is great for running a single agent. Once you are running multiple agents across different gateways, providers, and chat platforms, you need a control plane. SwarmClaw is that control plane.
+
+| OpenClaw pain point at scale | SwarmClaw solution |
+|-|-|
+| Managing multiple OpenClaw gateways from separate terminals | One dashboard for your full agent fleet |
+| Locked into a single LLM provider | 15 built-in providers |
+| No native multi-agent orchestration | LangGraph-powered multi-agent workflows |
+| No task queue or scheduling layer | Kanban task board + cron scheduling |
+| Manually bridging agents to chat platforms | 10+ chat connectors from the UI |
+| No cost visibility | Per-message token tracking and cost estimates |
+| Complex CLI-only setup | One-command install with guided setup wizard |
+
+SwarmClaw doesn't replace OpenClaw — it makes OpenClaw better. Think of it as the mission control for your agent fleet.
+
+## OpenClaw Integration
+
+SwarmClaw was built for OpenClaw users who outgrew a single agent. Connect each SwarmClaw agent to a different OpenClaw gateway (one local, several remote) and manage the whole swarm from one UI.
+
+SwarmClaw includes the `openclaw` CLI as a bundled dependency, so there is no separate OpenClaw CLI install step.
+
+The OpenClaw Control Plane in SwarmClaw adds:
+- Reload mode switching (`hot`, `hybrid`, `full`)
+- Config issue detection and guided repair
+- Remote history sync
+- Live execution approval handling
+
+The Agent Inspector Panel lets you edit OpenClaw files (`SOUL.md`, `IDENTITY.md`, `USER.md`), tune personality/system behavior, and manage OpenClaw-compatible skills. SwarmClaw also supports importing OpenClaw `SKILL.md` files from URL.
+
+To connect an agent to an OpenClaw gateway:
+
+1. Create or edit an agent
+2. Toggle **OpenClaw Gateway** ON
+3. Enter the gateway URL (e.g. `http://192.168.1.50:18789` or `https://my-vps:18789`)
+4. Add a gateway token if authentication is enabled on the remote gateway
+5. Click **Connect** — approve the device in your gateway's dashboard if prompted, then **Retry Connection**
+
+Each agent can point to a **different** OpenClaw gateway — one local, several remote. This is how you manage a **swarm of OpenClaws** from a single dashboard.
+
+URLs without a protocol are auto-prefixed with `http://`. For remote gateways with TLS, use `https://` explicitly.
 
 - Always use the access key authentication (generated on first run)
 - Never expose port 3456 without a reverse proxy + TLS
@@ -221,22 +263,6 @@ src/
 | Ollama | Local/Cloud | Connects to `localhost:11434`. No API key needed. 50+ models. |
 | OpenClaw | Per-Agent Gateway | Toggle in agent editor connects to any OpenClaw gateway via the bundled CLI. |
 | Custom | API | Any OpenAI-compatible endpoint. Add via Providers sidebar. |
-
-### OpenClaw
-
-[OpenClaw](https://github.com/openclaw/openclaw) is an open-source autonomous AI agent that runs on your own devices. SwarmClaw includes the `openclaw` CLI as a bundled dependency — no separate install needed.
-
-To connect an agent to an OpenClaw gateway:
-
-1. Create or edit an agent
-2. Toggle **OpenClaw Gateway** ON
-3. Enter the gateway URL (e.g. `http://192.168.1.50:18789` or `https://my-vps:18789`)
-4. Add a gateway token if authentication is enabled on the remote gateway
-5. Click **Connect** — approve the device in your gateway's dashboard if prompted, then **Retry Connection**
-
-Each agent can point to a **different** OpenClaw gateway — one local, several remote. This is how you manage a **swarm of OpenClaws** from a single dashboard.
-
-URLs without a protocol are auto-prefixed with `http://`. For remote gateways with TLS, use `https://` explicitly.
 
 ## Chat Connectors
 
