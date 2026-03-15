@@ -54,10 +54,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     saveAgents as unknown as (data: Record<string, Record<string, unknown>>) => void,
     'agents',
   )
-  clearProjectId(loadTasks, saveTasks as any, 'tasks')
-  clearProjectId(loadSchedules, saveSchedules, 'schedules')
-  clearProjectId(loadSkills, saveSkills, 'skills')
-  clearProjectId(loadSecrets, saveSecrets, 'secrets')
+  clearProjectId(loadTasks as unknown as () => Record<string, Record<string, unknown>>, saveTasks as unknown as (data: Record<string, Record<string, unknown>>) => void, 'tasks')
+  clearProjectId(loadSchedules as unknown as () => Record<string, Record<string, unknown>>, saveSchedules as unknown as (data: Record<string, Record<string, unknown>>) => void, 'schedules')
+  clearProjectId(loadSkills as unknown as () => Record<string, Record<string, unknown>>, saveSkills as unknown as (data: Record<string, Record<string, unknown>>) => void, 'skills')
+  clearProjectId(loadSecrets as unknown as () => Record<string, Record<string, unknown>>, saveSecrets as unknown as (data: Record<string, Record<string, unknown>>) => void, 'secrets')
 
   return NextResponse.json({ ok: true })
 }

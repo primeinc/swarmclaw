@@ -142,7 +142,9 @@ function toBaseline(target: WatchTarget, checkedAt: number): IntegrityBaselineEn
   }
 }
 
-export function runIntegrityMonitor(settings?: Record<string, unknown> | null): IntegrityMonitorResult {
+export function runIntegrityMonitor(
+  settings?: AppSettings | Record<string, unknown> | null,
+): IntegrityMonitorResult {
   const enabled = parseBool(settings?.integrityMonitorEnabled, true)
   const checkedAt = Date.now()
   if (!enabled) {
@@ -206,3 +208,4 @@ export function runIntegrityMonitor(settings?: Record<string, unknown> | null): 
     drifts,
   }
 }
+import type { AppSettings } from '@/types'

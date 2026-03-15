@@ -30,6 +30,9 @@ const COMMAND_GROUPS = {
     commands: {
       incidents: { description: 'List supervisor incidents (supports --query sessionId=..., --query taskId=..., --query limit=50)', method: 'GET', path: '/autonomy/incidents' },
       reflections: { description: 'List run reflections (supports --query sessionId=..., --query taskId=..., --query limit=50)', method: 'GET', path: '/autonomy/reflections' },
+      estop: { description: 'Get autonomy emergency-stop state', method: 'GET', path: '/autonomy/estop' },
+      'estop-set': { description: 'Engage or resume autonomy emergency-stop state', method: 'POST', path: '/autonomy/estop' },
+      'guardian-restore': { description: 'Restore the latest guardian checkpoint after approval', method: 'POST', path: '/autonomy/guardian/restore' },
     },
   },
   approvals: {
@@ -201,6 +204,15 @@ const COMMAND_GROUPS = {
     commands: {
       list: { description: 'Fetch logs (supports --query lines=200,level=INFO)', method: 'GET', path: '/logs' },
       clear: { description: 'Clear log file', method: 'DELETE', path: '/logs' },
+    },
+  },
+  missions: {
+    description: 'Inspect and control durable missions',
+    commands: {
+      list: { description: 'List missions (supports --query status=,phase=,source=,sessionId=,agentId=,projectId=)', method: 'GET', path: '/missions' },
+      get: { description: 'Get mission detail by id', method: 'GET', path: '/missions/:id', params: ['id'] },
+      events: { description: 'Get mission event timeline', method: 'GET', path: '/missions/:id/events', params: ['id'] },
+      action: { description: 'Run a mission control action (resume, replan, retry_verification, wait, cancel)', method: 'POST', path: '/missions/:id/actions', params: ['id'] },
     },
   },
   memory: {
@@ -418,6 +430,9 @@ const COMMAND_GROUPS = {
       clear: { description: 'Clear chat history', method: 'POST', path: '/chats/:id/clear', params: ['id'] },
       mailbox: { description: 'List mailbox envelopes for a chat', method: 'GET', path: '/chats/:id/mailbox', params: ['id'] },
       'mailbox-action': { description: 'Send/ack/clear mailbox envelopes', method: 'POST', path: '/chats/:id/mailbox', params: ['id'] },
+      queue: { description: 'List queued follow-up turns for a chat', method: 'GET', path: '/chats/:id/queue', params: ['id'] },
+      'queue-add': { description: 'Enqueue a follow-up turn for a busy chat', method: 'POST', path: '/chats/:id/queue', params: ['id'] },
+      'queue-clear': { description: 'Remove queued follow-up turns from a chat', method: 'DELETE', path: '/chats/:id/queue', params: ['id'] },
       deploy: { description: 'Deploy chat workspace git changes', method: 'POST', path: '/chats/:id/deploy', params: ['id'] },
       devserver: { description: 'Start/stop/status dev server (body: {"action":"start|stop|status"})', method: 'POST', path: '/chats/:id/devserver', params: ['id'] },
       browser: { description: 'Check browser runtime for chat', method: 'GET', path: '/chats/:id/browser', params: ['id'] },
@@ -481,6 +496,14 @@ const COMMAND_GROUPS = {
       approve: { description: 'Approve or reject a pending tool execution', method: 'POST', path: '/tasks/:id/approve', params: ['id'] },
       'import-github': { description: 'Import GitHub issues into tasks', method: 'POST', path: '/tasks/import/github' },
       metrics: { description: 'Get task board metrics (supports --query range=24h|7d|30d)', method: 'GET', path: '/tasks/metrics' },
+    },
+  },
+  runs: {
+    description: 'Session run queue/history',
+    commands: {
+      list: { description: 'List runs (supports --query sessionId=,status=,limit=)', method: 'GET', path: '/runs' },
+      get: { description: 'Get run by id', method: 'GET', path: '/runs/:id', params: ['id'] },
+      events: { description: 'Get run event history by run id', method: 'GET', path: '/runs/:id/events', params: ['id'] },
     },
   },
   wallets: {

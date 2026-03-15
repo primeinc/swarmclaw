@@ -50,6 +50,9 @@ const COMMAND_GROUPS = [
     commands: [
       cmd('incidents', 'GET', '/autonomy/incidents', 'List supervisor incidents (use --query sessionId=..., --query taskId=..., --query limit=50)'),
       cmd('reflections', 'GET', '/autonomy/reflections', 'List run reflections (use --query sessionId=..., --query taskId=..., --query limit=50)'),
+      cmd('estop', 'GET', '/autonomy/estop', 'Get autonomy emergency-stop state'),
+      cmd('estop-set', 'POST', '/autonomy/estop', 'Engage or resume autonomy emergency-stop state', { expectsJsonBody: true }),
+      cmd('guardian-restore', 'POST', '/autonomy/guardian/restore', 'Restore the latest guardian checkpoint after approval', { expectsJsonBody: true }),
     ],
   },
   {
@@ -295,6 +298,16 @@ const COMMAND_GROUPS = [
     ],
   },
   {
+    name: 'missions',
+    description: 'Inspect and control durable missions',
+    commands: [
+      cmd('list', 'GET', '/missions', 'List missions (use --query status=, --query phase=, --query source=, --query sessionId=, --query agentId=, --query projectId=)'),
+      cmd('get', 'GET', '/missions/:id', 'Get mission detail by id'),
+      cmd('events', 'GET', '/missions/:id/events', 'Get mission event timeline', { expectsQueryHint: true }),
+      cmd('action', 'POST', '/missions/:id/actions', 'Run a mission control action (resume, replan, retry_verification, wait, cancel)', { expectsJsonBody: true }),
+    ],
+  },
+  {
     name: 'notifications',
     description: 'Manage in-app notifications',
     commands: [
@@ -482,6 +495,7 @@ const COMMAND_GROUPS = [
     commands: [
       cmd('list', 'GET', '/runs', 'List runs (use --query sessionId=, --query status=, --query limit=)'),
       cmd('get', 'GET', '/runs/:id', 'Get run by id'),
+      cmd('events', 'GET', '/runs/:id/events', 'Get run event history by run id'),
     ],
   },
   {
@@ -536,6 +550,9 @@ const COMMAND_GROUPS = [
       cmd('browser-close', 'DELETE', '/chats/:id/browser', 'Close browser'),
       cmd('mailbox', 'GET', '/chats/:id/mailbox', 'List chat mailbox envelopes'),
       cmd('mailbox-action', 'POST', '/chats/:id/mailbox', 'Send/ack/clear mailbox envelopes', { expectsJsonBody: true }),
+      cmd('queue', 'GET', '/chats/:id/queue', 'List queued follow-up turns for a chat'),
+      cmd('queue-add', 'POST', '/chats/:id/queue', 'Enqueue a follow-up turn for a busy chat', { expectsJsonBody: true }),
+      cmd('queue-clear', 'DELETE', '/chats/:id/queue', 'Remove queued follow-up turns from a chat', { expectsJsonBody: true }),
       cmd('retry', 'POST', '/chats/:id/retry', 'Retry last assistant message'),
       cmd('deploy', 'POST', '/chats/:id/deploy', 'Deploy current chat branch', { expectsJsonBody: true }),
       cmd('devserver', 'POST', '/chats/:id/devserver', 'Dev server action via JSON body', { expectsJsonBody: true }),

@@ -159,7 +159,7 @@ export function didTaskValidationChange(
 
 export function refreshTaskCompletionValidation(
   task: BoardTask,
-  settings?: Record<string, unknown> | null,
+  settings?: AppSettings | Record<string, unknown> | null,
 ): { report: TaskReportArtifact | null; validation: TaskCompletionValidation } {
   const report = ensureTaskCompletionReport(task)
   if (report?.relativePath) task.completionReportPath = report.relativePath
@@ -198,3 +198,4 @@ export function markInvalidCompletedTaskFailed(
   }
   return task
 }
+import type { AppSettings } from '@/types'

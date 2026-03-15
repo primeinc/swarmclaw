@@ -60,7 +60,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     cwd: sessionCwd || WORKSPACE_DIR,
     agentExists: (agentId) => Boolean(agents[agentId]),
     propagateEquivalentStatuses: true,
-    propagationSource: current,
+    propagationSource: current as unknown as Record<string, unknown>,
   })
   if (!prepared.ok) {
     const message = errorMessage(prepared.error)

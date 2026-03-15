@@ -42,7 +42,7 @@ function resolveElevenLabsApiKeyCandidates(): string[] {
   pushCandidate(settings.elevenLabsApiKey)
   pushCandidate(process.env.ELEVENLABS_API_KEY)
 
-  for (const secret of Object.values(loadSecrets()) as Array<Record<string, unknown>>) {
+  for (const secret of Object.values(loadSecrets()) as unknown as Array<Record<string, unknown>>) {
     const label = [
       typeof secret.id === 'string' ? secret.id : '',
       typeof secret.name === 'string' ? secret.name : '',

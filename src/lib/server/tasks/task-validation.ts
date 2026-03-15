@@ -1,4 +1,4 @@
-import type { BoardTask } from '@/types'
+import type { AppSettings, BoardTask } from '@/types'
 import type { TaskReportArtifact } from '@/lib/server/tasks/task-reports'
 import { normalizeTaskQualityGate } from '@/lib/server/tasks/task-quality-gate'
 
@@ -10,7 +10,7 @@ export interface TaskCompletionValidation {
 
 interface TaskCompletionValidationOptions {
   report?: TaskReportArtifact | null
-  settings?: Record<string, unknown> | null
+  settings?: AppSettings | Record<string, unknown> | null
 }
 
 const MIN_RESULT_CHARS_IMPLEMENTATION = 40

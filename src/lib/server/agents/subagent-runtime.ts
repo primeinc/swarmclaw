@@ -195,7 +195,7 @@ async function spawnSubagentImpl(
   }
 
   // Use cached sessions if available (batch/swarm pass this to avoid N reads)
-  const sessions = (context._sessions ?? loadSessions()) as Record<string, Record<string, unknown>>
+  const sessions = (context._sessions ?? loadSessions()) as unknown as Record<string, Record<string, unknown>>
   const depth = getSessionDepth(context.sessionId, maxDepth, sessions)
   if (depth >= maxDepth) {
     throw new Error(`Max subagent depth (${maxDepth}) reached.`)

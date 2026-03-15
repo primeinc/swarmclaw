@@ -11,7 +11,7 @@
 
 import path from 'node:path'
 import type { StructuredToolInterface } from '@langchain/core/tools'
-import type { MessageToolEvent, SSEEvent } from '@/types'
+import type { AppSettings, MessageToolEvent, SSEEvent } from '@/types'
 import { loadAgents } from '@/lib/server/storage'
 import { buildSessionTools } from '@/lib/server/session-tools'
 import { resolveConcreteToolPolicyBlock, type PluginPolicyDecision } from '@/lib/server/tool-capability-policy'
@@ -56,7 +56,7 @@ export interface ToolRoutingContext {
   effectiveMessage: string
   enabledPlugins: string[]
   toolPolicy: PluginPolicyDecision
-  appSettings: Record<string, unknown>
+  appSettings: AppSettings | Record<string, unknown>
   internal: boolean
   source: string
   toolEvents: MessageToolEvent[]
@@ -222,7 +222,7 @@ export function resolveRequestedToolPreflightResponse(params: {
   message: string
   enabledPlugins: string[]
   toolPolicy: PluginPolicyDecision
-  appSettings: Record<string, unknown>
+  appSettings: AppSettings | Record<string, unknown>
   internal: boolean
   source: string
   session?: { agentId?: string | null } | null

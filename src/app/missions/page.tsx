@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { api } from '@/lib/app/api-client'
 import { useWs } from '@/hooks/use-ws'
+import { useAppStore } from '@/stores/use-app-store'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { StatCard } from '@/components/ui/stat-card'
 import { timeAgo } from '@/lib/time-format'
@@ -79,6 +80,8 @@ export default function MissionsPage() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const missionHumanLoopEnabled = useAppStore((state) => state.appSettings.missionHumanLoopEnabled === true)
+  const loadSettings = useAppStore((state) => state.loadSettings)
   const [missions, setMissions] = useState<Mission[]>([])
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null)
   const [selectedMission, setSelectedMission] = useState<MissionDetailResponse | null>(null)
@@ -89,6 +92,7 @@ export default function MissionsPage() {
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [policyPending, setPolicyPending] = useState(false)
   const [waitReason, setWaitReason] = useState('')
   const [waitKind, setWaitKind] = useState<MissionWaitKind>('other')
   const [waitUntil, setWaitUntil] = useState('')
@@ -135,6 +139,10 @@ export default function MissionsPage() {
   useEffect(() => {
     void loadList()
   }, [loadList])
+
+  useEffect(() => {
+    void loadSettings()
+  }, [loadSettings])
 
   useEffect(() => {
     void loadDetail(selectedMissionId)
@@ -202,8 +210,23 @@ export default function MissionsPage() {
     }
   }, [loadDetail, loadList, selectedMission, waitKind, waitReason, waitUntil])
 
+  const handleMissionHumanLoopToggle = useCallback(async () => {
+    setPolicyPending(true)
+    try {
+      await api('PUT', '/settings', {
+        missionHumanLoopEnabled: !missionHumanLoopEnabled,
+      })
+      await loadSettings()
+      setActionError(null)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to update mission policy.')
+    } finally {
+      setPolicyPending(false)
+    }
+  }, [loadSettings, missionHumanLoopEnabled])
+
   return (
-    <div className="min-h-screen bg-app px-4 py-5 md:px-6 md:py-6">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-app px-4 py-5 md:px-6 md:py-6">
       <div className="mx-auto max-w-[1600px] space-y-5">
         <section className="rounded-[24px] border border-white/[0.06] bg-white/[0.03] p-5 md:p-6">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -234,6 +257,33 @@ export default function MissionsPage() {
                   />
                 ))}
               </div>
+              <div className="mt-4 rounded-[14px] border border-white/[0.06] bg-white/[0.03] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[12px] font-700 text-text-2">Mission human loop</div>
+                    <div className="mt-1 text-[12px] leading-relaxed text-text-3/68">
+                      {missionHumanLoopEnabled
+                        ? 'Missions may stay open and wait for a human follow-up.'
+                        : 'Off by default. Generic “waiting for your next instruction” handoffs close instead of lingering as open missions.'}
+                    </div>
+                    <div className="mt-2 text-[11px] leading-relaxed text-text-3/50">
+                      Explicit tool approvals and real external blockers still apply.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleMissionHumanLoopToggle()}
+                    disabled={policyPending}
+                    aria-pressed={missionHumanLoopEnabled}
+                    aria-label={missionHumanLoopEnabled ? 'Disable mission human loop' : 'Enable mission human loop'}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${missionHumanLoopEnabled ? 'bg-accent-bright/80' : 'bg-white/[0.12]'} ${policyPending ? 'opacity-60' : ''}`}
+                  >
+                    <span
+                      className={`absolute left-[3px] top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-transform ${missionHumanLoopEnabled ? 'translate-x-[20px]' : 'translate-x-0'}`}
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -251,14 +301,14 @@ export default function MissionsPage() {
         )}
 
         <section className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-          <div className="rounded-[22px] border border-white/[0.06] bg-white/[0.02] p-3">
+          <div className="flex min-h-0 flex-col rounded-[22px] border border-white/[0.06] bg-white/[0.02] p-3">
             <div className="flex items-center justify-between px-2 pb-2">
               <div>
                 <div className="text-[12px] font-700 uppercase tracking-[0.1em] text-text-3/55">Missions</div>
                 <div className="text-[12px] text-text-3/45">{filtered.length} visible</div>
               </div>
             </div>
-            <div className="max-h-[72vh] space-y-2 overflow-y-auto pr-1">
+            <div className="max-h-[70vh] min-h-0 space-y-2 overflow-y-auto pr-1">
               {loading ? (
                 <div className="px-3 py-4 text-[13px] text-text-3/55">Loading missions…</div>
               ) : filtered.length === 0 ? (
@@ -531,7 +581,7 @@ export default function MissionsPage() {
                             {selectedMission.approvals.slice(0, 4).map((approval) => (
                               <div key={approval.id} className="rounded-[14px] border border-white/[0.06] bg-white/[0.03] px-3 py-2">
                                 <div className="text-[12px] font-700 text-text">{approval.status}</div>
-                                <div className="mt-1 text-[11px] text-text-3/55">{approval.subject || approval.id}</div>
+                                <div className="mt-1 text-[11px] text-text-3/55">{approval.title || approval.id}</div>
                               </div>
                             ))}
                           </div>
@@ -539,9 +589,9 @@ export default function MissionsPage() {
                       )}
                     </div>
 
-                    <div className="rounded-[18px] border border-white/[0.06] bg-surface/70 p-4">
+                    <div className="flex min-h-0 flex-col rounded-[18px] border border-white/[0.06] bg-surface/70 p-4">
                       <div className="text-[11px] font-700 uppercase tracking-[0.1em] text-text-3/55">Timeline</div>
-                      <div className="mt-3 space-y-2">
+                      <div className="mt-3 max-h-[420px] min-h-0 space-y-2 overflow-y-auto pr-1">
                         {selectedMission.events.length === 0 ? (
                           <div className="text-[12px] text-text-3/55">No mission events recorded yet.</div>
                         ) : selectedMission.events.map((event) => (

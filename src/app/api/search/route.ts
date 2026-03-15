@@ -108,12 +108,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ results: [] })
   }
 
-  const tasks = loadTasks() as Record<string, Record<string, unknown>>
+  const tasks = loadTasks() as unknown as Record<string, Record<string, unknown>>
   const agents = loadAgents() as unknown as Record<string, Record<string, unknown>>
   const sessions = loadSessions() as unknown as Record<string, Record<string, unknown>>
-  const schedules = loadSchedules() as Record<string, Record<string, unknown>>
-  const webhooks = loadWebhooks() as Record<string, Record<string, unknown>>
-  const skills = loadSkills() as Record<string, Record<string, unknown>>
+  const schedules = loadSchedules() as unknown as Record<string, Record<string, unknown>>
+  const webhooks = loadWebhooks() as unknown as Record<string, Record<string, unknown>>
+  const skills = loadSkills() as unknown as Record<string, Record<string, unknown>>
 
   const buckets: SearchResult[][] = [
     searchCollection(agents, 'agent', q, 'name', 'description'),

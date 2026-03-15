@@ -199,6 +199,87 @@ describe('mission-service', () => {
     assert.equal(output.waitReason, 'Design approval is still pending.')
   })
 
+  it('leaves unrelated one-shot turns missionless when classification says none', () => {
+    const output = runWithTempDataDir<{
+      resolvedMissionId: string | null
+      sessionMissionId: string | null
+    }>(`
+      const storageMod = await import('@/lib/server/storage')
+      const missionMod = await import('@/lib/server/missions/mission-service')
+      const storage = storageMod.default || storageMod['module.exports'] || storageMod
+      const missions = missionMod.default || missionMod['module.exports'] || missionMod
+
+      storage.saveSessions({
+        sessionA: {
+          id: 'sessionA',
+          name: 'Main Chat',
+          cwd: process.env.WORKSPACE_DIR,
+          user: 'tester',
+          provider: 'ollama',
+          model: 'test-model',
+          claudeSessionId: null,
+          messages: [],
+          createdAt: 1,
+          lastActiveAt: 1,
+          agentId: 'agentA',
+          missionId: 'missionA',
+        },
+      })
+
+      storage.saveAgents({
+        agentA: {
+          id: 'agentA',
+          name: 'Agent A',
+          provider: 'ollama',
+          model: 'test-model',
+          systemPrompt: 'test',
+        },
+      })
+
+      storage.saveMissions({
+        missionA: {
+          id: 'missionA',
+          source: 'chat',
+          sourceRef: { kind: 'chat', sessionId: 'sessionA' },
+          objective: 'Long-running dashboard mission',
+          status: 'active',
+          phase: 'planning',
+          sessionId: 'sessionA',
+          agentId: 'agentA',
+          taskIds: [],
+          childMissionIds: [],
+          dependencyMissionIds: [],
+          dependencyTaskIds: [],
+          currentStep: 'Wait for the next dashboard task',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      })
+
+      const session = storage.loadSessions().sessionA
+      const resolved = await missions.resolveMissionForTurn({
+        session,
+        message: 'Thanks',
+        source: 'chat',
+        internal: false,
+        runId: 'run-1',
+        generateText: async () => JSON.stringify({
+          action: 'none',
+          confidence: 0.98,
+        }),
+      })
+
+      const persistedSession = storage.loadSessions().sessionA
+      console.log(JSON.stringify({
+        resolvedMissionId: resolved?.id || null,
+        sessionMissionId: persistedSession.missionId || null,
+      }))
+    `, { prefix: 'swarmclaw-mission-service-' })
+
+    assert.equal(output.resolvedMissionId, null)
+    assert.equal(output.sessionMissionId, 'missionA')
+  })
+
   it('dispatches linked backlog tasks from a mission tick', () => {
     const output = runWithTempDataDir<{
       missionId: string | null
@@ -512,6 +593,202 @@ describe('mission-service', () => {
     assert.equal(output.resumedCount, 1)
     assert.equal(output.missionStatus, 'active')
     assert.equal(output.missionPhase, 'planning')
+  })
+
+  it('does not wake non-human waiting missions on unrelated replies', () => {
+    const output = runWithTempDataDir<{
+      resumedCount: number
+      missionStatus: string | null
+      missionPhase: string | null
+      eventTypes: string[]
+    }>(`
+      const storageMod = await import('@/lib/server/storage')
+      const missionMod = await import('@/lib/server/missions/mission-service')
+      const storage = storageMod.default || storageMod['module.exports'] || storageMod
+      const missions = missionMod.default || missionMod['module.exports'] || missionMod
+
+      storage.saveMissions({
+        missionA: {
+          id: 'missionA',
+          source: 'chat',
+          sourceRef: { kind: 'chat', sessionId: 'sessionA' },
+          objective: 'Wait for approval before shipping',
+          status: 'waiting',
+          phase: 'waiting',
+          sessionId: 'sessionA',
+          waitState: { kind: 'approval', reason: 'Waiting for approval.' },
+          taskIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      })
+
+      const resumed = missions.requestMissionTicksForHumanReply({
+        sessionId: 'sessionA',
+        correlationId: 'corr-1',
+        payload: 'Here is an unrelated follow-up.',
+      })
+      const mission = missions.loadMissionById('missionA')
+      const events = missions.listMissionEventsForMission('missionA')
+
+      console.log(JSON.stringify({
+        resumedCount: resumed.length,
+        missionStatus: mission?.status || null,
+        missionPhase: mission?.phase || null,
+        eventTypes: events.map((event) => event.type),
+      }))
+    `, { prefix: 'swarmclaw-mission-service-' })
+
+    assert.equal(output.resumedCount, 0)
+    assert.equal(output.missionStatus, 'waiting')
+    assert.equal(output.missionPhase, 'waiting')
+    assert.equal(output.eventTypes.includes('source_triggered'), false)
+  })
+
+  it('closes mission outcomes that only wait for a human reply when mission human loop is disabled', () => {
+    const output = runWithTempDataDir<{
+      missionStatus: string | null
+      missionPhase: string | null
+      verifierSummary: string | null
+      eventTypes: string[]
+    }>(`
+      const storageMod = await import('@/lib/server/storage')
+      const missionMod = await import('@/lib/server/missions/mission-service')
+      const storage = storageMod.default || storageMod['module.exports'] || storageMod
+      const missions = missionMod.default || missionMod['module.exports'] || missionMod
+
+      storage.saveSettings({ missionHumanLoopEnabled: false })
+      storage.saveSessions({
+        sessionA: {
+          id: 'sessionA',
+          name: 'Mission Chat',
+          cwd: process.env.WORKSPACE_DIR,
+          user: 'tester',
+          provider: 'ollama',
+          model: 'test-model',
+          claudeSessionId: null,
+          messages: [],
+          createdAt: 1,
+          lastActiveAt: 1,
+          agentId: 'agentA',
+        },
+      })
+      storage.saveAgents({
+        agentA: {
+          id: 'agentA',
+          name: 'Agent A',
+          provider: 'ollama',
+          model: 'test-model',
+          systemPrompt: 'test',
+        },
+      })
+      storage.saveMissions({
+        missionA: {
+          id: 'missionA',
+          source: 'chat',
+          sourceRef: { kind: 'chat', sessionId: 'sessionA' },
+          objective: 'Create one small file',
+          status: 'active',
+          phase: 'executing',
+          sessionId: 'sessionA',
+          agentId: 'agentA',
+          taskIds: [],
+          childMissionIds: [],
+          dependencyMissionIds: [],
+          dependencyTaskIds: [],
+          currentStep: 'Write the file',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      })
+
+      const updated = await missions.applyMissionOutcomeForTurn({
+        session: storage.loadSessions().sessionA,
+        missionId: 'missionA',
+        source: 'chat',
+        runId: 'run-1',
+        message: 'Create mission.txt with start in it.',
+        assistantText: 'Done. Let me know what you want next.',
+        toolEvents: [],
+        generateText: async () => JSON.stringify({
+          verdict: 'waiting',
+          confidence: 0.91,
+          phase: 'waiting',
+          waitKind: 'human_reply',
+          waitReason: 'Waiting for the user to say what to do next.',
+          verifierSummary: 'The file is done and the mission is waiting for the next instruction.',
+        }),
+      })
+      const events = missions.listMissionEventsForMission('missionA')
+
+      console.log(JSON.stringify({
+        missionStatus: updated?.status || null,
+        missionPhase: updated?.phase || null,
+        verifierSummary: updated?.verifierSummary || null,
+        eventTypes: events.map((event) => event.type),
+      }))
+    `, { prefix: 'swarmclaw-mission-service-' })
+
+    assert.equal(output.missionStatus, 'completed')
+    assert.equal(output.missionPhase, 'completed')
+    assert.match(String(output.verifierSummary || ''), /human-loop waits are disabled/i)
+    assert.ok(output.eventTypes.includes('completed'))
+    assert.equal(output.eventTypes.includes('waiting'), false)
+  })
+
+  it('does not leave planner ticks waiting for a human reply when mission human loop is disabled', () => {
+    const output = runWithTempDataDir<{
+      missionStatus: string | null
+      missionPhase: string | null
+      plannerDecision: string | null
+      lastVerdict: string | null
+    }>(`
+      const storageMod = await import('@/lib/server/storage')
+      const missionMod = await import('@/lib/server/missions/mission-service')
+      const storage = storageMod.default || storageMod['module.exports'] || storageMod
+      const missions = missionMod.default || missionMod['module.exports'] || missionMod
+
+      storage.saveSettings({ missionHumanLoopEnabled: false })
+      storage.saveMissions({
+        missionA: {
+          id: 'missionA',
+          source: 'manual',
+          sourceRef: { kind: 'manual' },
+          objective: 'Finish the small file task',
+          status: 'active',
+          phase: 'planning',
+          taskIds: [],
+          childMissionIds: [],
+          dependencyMissionIds: [],
+          dependencyTaskIds: [],
+          currentStep: 'Close out the task',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      })
+
+      const updated = await missions.runMissionTick('missionA', 'test', {
+        generateText: async () => JSON.stringify({
+          decision: 'wait',
+          confidence: 0.88,
+          summary: 'Waiting for the user to say what to do next.',
+          waitKind: 'human_reply',
+          waitReason: 'Waiting for the next instruction.',
+        }),
+      })
+
+      console.log(JSON.stringify({
+        missionStatus: updated?.status || null,
+        missionPhase: updated?.phase || null,
+        plannerDecision: updated?.plannerState?.lastDecision || null,
+        lastVerdict: updated?.verificationState?.lastVerdict || null,
+      }))
+    `, { prefix: 'swarmclaw-mission-service-' })
+
+    assert.equal(output.missionStatus, 'completed')
+    assert.equal(output.missionPhase, 'completed')
+    assert.equal(output.plannerDecision, 'verify_now')
+    assert.equal(output.lastVerdict, 'completed')
   })
 
   it('requests mission ticks when provider recovery clears a provider wait', () => {

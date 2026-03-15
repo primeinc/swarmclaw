@@ -1267,8 +1267,9 @@ export async function processNext() {
       if (isScheduleTask && sourceScheduleId) {
         const schedules = loadSchedules()
         const linkedSchedule = schedules[sourceScheduleId]
-        const existingSessionId = typeof linkedSchedule?.lastSessionId === 'string'
-          ? linkedSchedule.lastSessionId
+        const linkedScheduleRecord = linkedSchedule as unknown as Record<string, unknown> | undefined
+        const existingSessionId = typeof linkedScheduleRecord?.lastSessionId === 'string'
+          ? linkedScheduleRecord.lastSessionId
           : ''
         if (existingSessionId) {
           const sessions = loadSessions()
@@ -1285,10 +1286,11 @@ export async function processNext() {
             taskRoutePreferences,
           )
         }
-        if (linkedSchedule && linkedSchedule.lastSessionId !== sessionId) {
-          linkedSchedule.lastSessionId = sessionId
-          linkedSchedule.updatedAt = Date.now()
-          schedules[sourceScheduleId] = linkedSchedule
+        if (linkedScheduleRecord && linkedScheduleRecord.lastSessionId !== sessionId) {
+          linkedScheduleRecord.lastSessionId = sessionId
+          linkedScheduleRecord.updatedAt = Date.now()
+          const updatedLinkedSchedule = linkedScheduleRecord as unknown as typeof linkedSchedule
+          schedules[sourceScheduleId] = updatedLinkedSchedule
           saveSchedules(schedules)
         }
       } else {

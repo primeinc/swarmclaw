@@ -1,4 +1,4 @@
-import type { LoopMode } from '@/types'
+import type { AppSettings, LoopMode } from '@/types'
 
 export const DEFAULT_LOOP_MODE: LoopMode = 'bounded'
 
@@ -57,7 +57,9 @@ export interface NormalizedRuntimeSettingFields {
   requiredToolKickoffSec: number
 }
 
-export function normalizeRuntimeSettingFields(settings: Record<string, unknown>): NormalizedRuntimeSettingFields {
+export function normalizeRuntimeSettingFields(
+  settings: Partial<AppSettings> | Record<string, unknown>,
+): NormalizedRuntimeSettingFields {
   return {
     loopMode: settings.loopMode === 'ongoing' ? 'ongoing' : DEFAULT_LOOP_MODE,
     agentLoopRecursionLimit: parseIntSetting(

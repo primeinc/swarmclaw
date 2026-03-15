@@ -1,3 +1,5 @@
+import type { AppSettings } from '@/types'
+
 export const DEFAULT_MEMORY_REFERENCE_DEPTH = 3
 export const DEFAULT_MAX_MEMORIES_PER_LOOKUP = 20
 export const DEFAULT_MAX_LINKED_MEMORIES_EXPANDED = 60
@@ -43,7 +45,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-export function normalizeMemoryLookupLimits(settings: Record<string, unknown>): MemoryLookupLimits {
+export function normalizeMemoryLookupLimits(
+  settings: Partial<AppSettings> | Record<string, unknown>,
+): MemoryLookupLimits {
   const depthRaw = parseIntSetting(settings.memoryReferenceDepth ?? settings.memoryMaxDepth)
   const perLookupRaw = parseIntSetting(settings.maxMemoriesPerLookup ?? settings.memoryMaxPerLookup)
   const linkedRaw = parseIntSetting(settings.maxLinkedMemoriesExpanded)

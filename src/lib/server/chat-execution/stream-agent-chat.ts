@@ -668,7 +668,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
   if (hasProvidedSystemPrompt) {
     promptParts.push(systemPrompt!.trim())
   } else {
-    if (settings.userPrompt) promptParts.push(settings.userPrompt)
+    if (typeof settings.userPrompt === 'string' && settings.userPrompt.trim()) promptParts.push(settings.userPrompt)
     promptParts.push(buildCurrentDateTimePromptContext())
   }
 

@@ -1,3 +1,5 @@
+import type { AppSettings } from '@/types'
+
 export const DEFAULT_HEARTBEAT_INTERVAL_SEC = 1800
 export const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300
 export const DEFAULT_HEARTBEAT_SHOW_OK = false
@@ -32,7 +34,9 @@ export interface NormalizedHeartbeatSettingFields {
   heartbeatPrompt: string | null
 }
 
-export function normalizeHeartbeatSettingFields(settings: Record<string, unknown>): NormalizedHeartbeatSettingFields {
+export function normalizeHeartbeatSettingFields(
+  settings: Partial<AppSettings> | Record<string, unknown>,
+): NormalizedHeartbeatSettingFields {
   return {
     heartbeatIntervalSec: parseIntSetting(settings.heartbeatIntervalSec, DEFAULT_HEARTBEAT_INTERVAL_SEC, 0, 86_400),
     heartbeatAckMaxChars: parseIntSetting(settings.heartbeatAckMaxChars, DEFAULT_HEARTBEAT_ACK_MAX_CHARS, 0, 8_000),

@@ -1885,6 +1885,7 @@ export interface AppSettings {
   supervisorNoProgressLimit?: number
   supervisorRepeatedToolLimit?: number
   autonomyResumeApprovalsEnabled?: boolean
+  missionHumanLoopEnabled?: boolean
   reflectionEnabled?: boolean
   reflectionAutoWriteMemory?: boolean
   memoryReferenceDepth?: number

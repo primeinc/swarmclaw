@@ -40,7 +40,7 @@ export function suspendAgentReferences(agentId: string): CascadeCounts {
   // 1. Tasks — cancel active ones
   const tasks = loadTasks()
   const taskUpdates: Array<[string, unknown]> = []
-  for (const t of Object.values(tasks) as Array<Record<string, unknown>>) {
+  for (const t of Object.values(tasks) as unknown as Array<Record<string, unknown>>) {
     if (!t || t.agentId !== agentId) continue
     const status = t.status as string | undefined
     if (status === 'backlog' || status === 'queued' || status === 'running') {
@@ -57,7 +57,7 @@ export function suspendAgentReferences(agentId: string): CascadeCounts {
   // 2. Schedules — pause (with marker for restore)
   const schedules = loadSchedules()
   const schedUpdates: Array<[string, unknown]> = []
-  for (const s of Object.values(schedules) as Array<Record<string, unknown>>) {
+  for (const s of Object.values(schedules) as unknown as Array<Record<string, unknown>>) {
     if (!s || s.agentId !== agentId) continue
     if (s.enabled === false) continue
     s.enabled = false
@@ -72,7 +72,7 @@ export function suspendAgentReferences(agentId: string): CascadeCounts {
   // 3. Watch jobs — cancel active
   const watchJobs = loadWatchJobs()
   const wjUpdates: Array<[string, unknown]> = []
-  for (const w of Object.values(watchJobs) as Array<Record<string, unknown>>) {
+  for (const w of Object.values(watchJobs) as unknown as Array<Record<string, unknown>>) {
     if (!w || w.agentId !== agentId) continue
     if (w.status === 'cancelled') continue
     w.status = 'cancelled'
@@ -86,7 +86,7 @@ export function suspendAgentReferences(agentId: string): CascadeCounts {
   // 4. Connectors — detach agent (keep connector alive but unrouted)
   const connectors = loadConnectors()
   const connUpdates: Array<[string, unknown]> = []
-  for (const c of Object.values(connectors) as Array<Record<string, unknown>>) {
+  for (const c of Object.values(connectors) as unknown as Array<Record<string, unknown>>) {
     if (!c || c.agentId !== agentId) continue
     c.agentId = null
     connUpdates.push([c.id as string, c])
@@ -99,7 +99,7 @@ export function suspendAgentReferences(agentId: string): CascadeCounts {
   // 5. Delegation jobs — cancel queued/running
   const delegationJobs = loadDelegationJobs()
   const djUpdates: Array<[string, unknown]> = []
-  for (const d of Object.values(delegationJobs) as Array<Record<string, unknown>>) {
+  for (const d of Object.values(delegationJobs) as unknown as Array<Record<string, unknown>>) {
     if (!d || d.agentId !== agentId) continue
     const status = d.status as string | undefined
     if (status === 'queued' || status === 'running') {
@@ -115,7 +115,7 @@ export function suspendAgentReferences(agentId: string): CascadeCounts {
   // 6. Webhooks — disable
   const webhooks = loadWebhooks()
   const whUpdates: Array<[string, unknown]> = []
-  for (const w of Object.values(webhooks) as Array<Record<string, unknown>>) {
+  for (const w of Object.values(webhooks) as unknown as Array<Record<string, unknown>>) {
     if (!w || w.agentId !== agentId) continue
     if (w.enabled === false) continue
     w.enabled = false
@@ -147,7 +147,7 @@ export function purgeAgentReferences(agentId: string): CascadeCounts {
   // Connectors: detach agent but keep the connector record
   const connectors = loadConnectors()
   const connUpdates: Array<[string, unknown]> = []
-  for (const c of Object.values(connectors) as Array<Record<string, unknown>>) {
+  for (const c of Object.values(connectors) as unknown as Array<Record<string, unknown>>) {
     if (!c || c.agentId !== agentId) continue
     c.agentId = null
     connUpdates.push([c.id as string, c])
@@ -168,7 +168,7 @@ export function purgeAgentReferences(agentId: string): CascadeCounts {
 export function restoreAgentSchedules(agentId: string): number {
   const schedules = loadSchedules()
   const updates: Array<[string, unknown]> = []
-  for (const s of Object.values(schedules) as Array<Record<string, unknown>>) {
+  for (const s of Object.values(schedules) as unknown as Array<Record<string, unknown>>) {
     if (!s || s.agentId !== agentId) continue
     if (!s.suspendedByTrash) continue
     s.enabled = true
@@ -183,15 +183,16 @@ export function restoreAgentSchedules(agentId: string): number {
 
 // ── Internals ───────────────────────────────────────────────────────────
 
-function deleteMatching(
+function deleteMatching<T extends { agentId?: string | null; id?: string | null }>(
   table: StorageCollection,
-  collection: Record<string, Record<string, unknown>>,
+  collection: Record<string, T>,
   agentId: string,
 ): number {
   let count = 0
   for (const item of Object.values(collection)) {
     if (!item || item.agentId !== agentId) continue
-    deleteStoredItem(table, item.id as string)
+    if (!item.id) continue
+    deleteStoredItem(table, item.id)
     count++
   }
   return count
@@ -200,7 +201,7 @@ function deleteMatching(
 function removeAgentFromChatrooms(agentId: string): number {
   const chatrooms = loadChatrooms()
   const updates: Array<[string, unknown]> = []
-  for (const room of Object.values(chatrooms) as Array<Record<string, unknown>>) {
+  for (const room of Object.values(chatrooms) as unknown as Array<Record<string, unknown>>) {
     if (!room) continue
     let changed = false
     if (Array.isArray(room.members)) {

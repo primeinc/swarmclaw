@@ -1804,7 +1804,7 @@ async function routeMessage(connector: Connector, msg: InboundMessage): Promise<
   promptParts.push(identityLines.join(' '))
   const continuityBlock = buildIdentityContinuityContext(session as Session, agent)
   if (continuityBlock) promptParts.push(continuityBlock)
-  if (settings.userPrompt) promptParts.push(settings.userPrompt)
+  if (typeof settings.userPrompt === 'string' && settings.userPrompt.trim()) promptParts.push(settings.userPrompt)
   promptParts.push(buildCurrentDateTimePromptContext())
   if (agent.soul) promptParts.push(agent.soul)
   if (agent.systemPrompt) promptParts.push(agent.systemPrompt)

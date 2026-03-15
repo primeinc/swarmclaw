@@ -10,7 +10,7 @@ const ALL_KNOWN_PEER_IDS_MIGRATION_FLAG = '_migration_allKnownPeerIds'
 const THREAD_CONNECTOR_MIRROR_CLEANUP_FLAG = '_migration_pruneThreadConnectorMirrors'
 
 export function backfillAllKnownPeerIds(): { migrated: number; skipped: boolean } {
-  const settings = loadSettings()
+  const settings = loadSettings() as Record<string, unknown>
   if (settings[ALL_KNOWN_PEER_IDS_MIGRATION_FLAG]) {
     return { migrated: 0, skipped: true }
   }
@@ -39,7 +39,7 @@ export function backfillAllKnownPeerIds(): { migrated: number; skipped: boolean 
     migrated++
   }
 
-  const updated = loadSettings()
+  const updated = loadSettings() as Record<string, unknown>
   updated[ALL_KNOWN_PEER_IDS_MIGRATION_FLAG] = true
   saveSettings(updated)
   if (migrated > 0) {
@@ -49,7 +49,7 @@ export function backfillAllKnownPeerIds(): { migrated: number; skipped: boolean 
 }
 
 export function pruneThreadConnectorMirrors(): { cleanedSessions: number; removedMessages: number; skipped: boolean } {
-  const settings = loadSettings()
+  const settings = loadSettings() as Record<string, unknown>
   if (settings[THREAD_CONNECTOR_MIRROR_CLEANUP_FLAG]) {
     return { cleanedSessions: 0, removedMessages: 0, skipped: true }
   }
@@ -77,7 +77,7 @@ export function pruneThreadConnectorMirrors(): { cleanedSessions: number; remove
     removedMessages += removed
   }
 
-  const updated = loadSettings()
+  const updated = loadSettings() as Record<string, unknown>
   updated[THREAD_CONNECTOR_MIRROR_CLEANUP_FLAG] = true
   saveSettings(updated)
   if (removedMessages > 0) {

@@ -1,4 +1,4 @@
-import { performGuardianRollback } from '../src/lib/server/agents/guardian'
+import { captureGuardianCheckpoint, prepareGuardianRecovery } from '../src/lib/server/agents/guardian'
 import { applyMMR } from '../src/lib/server/mmr'
 import { execSync } from 'child_process'
 import fs from 'fs'
@@ -54,8 +54,8 @@ async function runTests() {
     console.log('❌ MMR Diversity Test Failed: Diversity still not prioritized.')
   }
 
-  // --- 2. Test Guardian Rollback ---
-  console.log('\n--- Testing Guardian Auto-Recovery (Rollback) ---')
+  // --- 2. Test Guardian Recovery Prep ---
+  console.log('\n--- Testing Guardian Recovery Preparation ---')
   const testRepoDir = path.join(os.tmpdir(), `swarmclaw-test-repo-${Date.now()}`)
   fs.mkdirSync(testRepoDir)
   
@@ -66,17 +66,26 @@ async function runTests() {
     fs.writeFileSync(path.join(testRepoDir, 'config.json'), '{"status": "ok"}')
     execSync('git add . && git commit -m "Initial commit"', { cwd: testRepoDir })
     
+    const checkpoint = captureGuardianCheckpoint(testRepoDir, 'feature-validation')
+    if (!checkpoint.ok) {
+      console.log('❌ Guardian Checkpoint Test Failed: unable to capture checkpoint.')
+      return
+    }
+
     // Corrupt the file
     fs.writeFileSync(path.join(testRepoDir, 'config.json'), '{"status": "CORRUPTED"}')
     console.log('Simulating workspace corruption...')
-    
-    const rollback = performGuardianRollback(testRepoDir)
-    const restoredContent = fs.readFileSync(path.join(testRepoDir, 'config.json'), 'utf8')
-    
-    if (rollback.ok && restoredContent.includes('ok')) {
-      console.log('✅ Guardian Rollback Test Passed! (Clean state restored)')
+
+    const recovery = prepareGuardianRecovery({
+      cwd: testRepoDir,
+      reason: 'Feature validation corruption test',
+      requester: 'feature-validation',
+    })
+
+    if (recovery.ok && recovery.approval?.id && recovery.checkpoint?.approvalId === recovery.approval.id) {
+      console.log('✅ Guardian Recovery Prep Test Passed! (Checkpoint + approval created)')
     } else {
-      console.log('❌ Guardian Rollback Test Failed!')
+      console.log('❌ Guardian Recovery Prep Test Failed!')
     }
   } catch (err) {
     console.error('Guardian test error:', err)

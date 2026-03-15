@@ -358,8 +358,9 @@ function buildRecentMessageContext(messages: Message[] | undefined): string {
 
 function summarizeMission(mission: MissionSummary | Mission | null | undefined): string {
   if (!mission) return '(none)'
-  const successCriteria = Array.isArray(mission.successCriteria) && mission.successCriteria.length > 0
-    ? mission.successCriteria.join(' | ')
+  const rawSuccessCriteria = 'successCriteria' in mission ? mission.successCriteria : undefined
+  const successCriteria = Array.isArray(rawSuccessCriteria) && rawSuccessCriteria.length > 0
+    ? rawSuccessCriteria.join(' | ')
     : '(none)'
   return [
     `objective=${JSON.stringify(normalizeText(mission.objective, 260) || '(none)')}`,
@@ -436,7 +437,7 @@ function summarizeRecentEvents(events: MissionPlannerInput['recentEvents']): str
 }
 
 function buildMissionPlannerPrompt(input: MissionPlannerInput): string {
-  const verification = input.mission.verificationState
+  const verification = 'verificationState' in input.mission ? input.mission.verificationState : undefined
   return [
     'Decide the next durable mission-controller action.',
     'Return JSON only.',
@@ -480,6 +481,8 @@ function buildMissionTurnPrompt(input: MissionTurnClassifierInput): string {
     '',
     'Mission policy:',
     '- Choose "create_new" only when the request is clearly multi-step, durable, resumable, deliverable-oriented, or likely to require follow-up action.',
+    '- A small request that can be fully satisfied in the current turn should usually stay ordinary chat, even if it writes a file, produces an artifact, or could have future follow-up.',
+    '- Do not create a mission just because the user might say more later. Unspecified future instructions alone are not durable mission state.',
     '- Choose "attach_current" when the new user turn is a continuation, refinement, correction, or next step for the current mission.',
     '- Choose "none" for one-shot questions, casual chat, simple factual replies, or turns that should not create durable execution state.',
     '- Be conservative. If the turn is not clearly mission-worthy, return {"action":"none","confidence":0}.',

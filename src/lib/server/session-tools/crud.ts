@@ -911,10 +911,22 @@ export function buildCrudTools(bctx: ToolBuildContext): StructuredToolInterface[
                   loadAgents as unknown as () => Record<string, Record<string, unknown>>,
                   saveAgents as unknown as (data: Record<string, Record<string, unknown>>) => void,
                 )
-                clearProjectId(loadTasks, saveTasks as any)
-                clearProjectId(loadSchedules, saveSchedules as any)
-                clearProjectId(loadSkills, saveSkills as any)
-                clearProjectId(loadSecrets, saveSecrets as any)
+                clearProjectId(
+                  loadTasks as unknown as () => Record<string, Record<string, unknown>>,
+                  saveTasks as unknown as (data: Record<string, Record<string, unknown>>) => void,
+                )
+                clearProjectId(
+                  loadSchedules as unknown as () => Record<string, Record<string, unknown>>,
+                  saveSchedules as unknown as (data: Record<string, Record<string, unknown>>) => void,
+                )
+                clearProjectId(
+                  loadSkills as unknown as () => Record<string, Record<string, unknown>>,
+                  saveSkills as unknown as (data: Record<string, Record<string, unknown>>) => void,
+                )
+                clearProjectId(
+                  loadSecrets as unknown as () => Record<string, Record<string, unknown>>,
+                  saveSecrets as unknown as (data: Record<string, Record<string, unknown>>) => void,
+                )
               }
               return JSON.stringify({
                 deleted: effectiveId,

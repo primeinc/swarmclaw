@@ -17,6 +17,13 @@ Extension tutorial: https://swarmclaw.ai/docs/extension-tutorial
 
 ## Release Notes
 
+### v1.1.0 Highlights
+
+- **Mission controller and Missions UI**: SwarmClaw now tracks durable multi-step objectives as missions with status, phase, linked tasks, queued turns, recent runs, event history, and operator actions from the new **Missions** surface.
+- **Autonomy safety desk and run replay**: the new **Autonomy Control** page adds estop visibility, resume policy controls, incident review, and run replay backed by durable run history rather than transient in-memory state.
+- **Durable queued follow-ups**: direct chat and connector follow-up turns now use a backend queue so queued work survives reloads, drains in order, and stays attached to the right mission/session context.
+- **Chat execution and UX hardening**: streamed handoff, memory writes, inline media, queue state, and tool-policy fallback behavior were cleaned up so agents are less noisy, less brittle, and easier to follow in real chats.
+
 ### v1.0.9 Highlights
 
 - **Quieter chat and inbox replies**: chat-origin and connector turns now suppress more hidden control text, stop replaying connector-tool output as normal assistant prose, and avoid extra empty follow-up chatter after successful tool work.
@@ -108,7 +115,7 @@ Then open `http://localhost:3456`.
 
 - **Providers**: OpenClaw, OpenAI, Anthropic, Ollama, Google, DeepSeek, Groq, Together, Mistral, xAI, Fireworks, plus compatible custom endpoints.
 - **Delegation**: built-in delegation to Claude Code, Codex CLI, OpenCode CLI, Gemini CLI, and native SwarmClaw subagents.
-- **Autonomy**: heartbeat loops, schedules, background jobs, task execution, supervisor recovery, and agent wakeups.
+- **Autonomy**: heartbeat loops, schedules, background jobs, task execution, supervisor recovery, mission control, and agent wakeups.
 - **Memory**: hybrid recall, graph traversal, journaling, durable documents, project-scoped context, automatic reflection memory, communication preferences, profile and boundary memory, significant events, and open follow-up loops.
 - **Wallets**: balances, transfers, signatures, EVM call/quote/swap flows, and approval-gated execution.
 - **Connectors**: Discord, Slack, Telegram, WhatsApp, Teams, Matrix, OpenClaw, and more.

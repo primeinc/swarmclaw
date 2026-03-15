@@ -56,7 +56,7 @@ export function findRelatedScheduleIds(
 
 export function getScheduleClusterIds(
   schedules: Record<string, ScheduleLike>,
-  schedule: Record<string, unknown> | null | undefined,
+  schedule: ScheduleLike | null | undefined,
   opts: { ignoreId?: string | null } = {},
 ): string[] {
   const id = typeof schedule?.id === 'string' ? schedule.id : ''

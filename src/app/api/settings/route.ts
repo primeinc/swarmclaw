@@ -142,6 +142,7 @@ export async function PUT(req: Request) {
   settings.integrityMonitorEnabled = parseBoolSetting(settings.integrityMonitorEnabled, true)
   settings.daemonAutostartEnabled = parseBoolSetting(settings.daemonAutostartEnabled, true)
   settings.autonomyResumeApprovalsEnabled = parseBoolSetting(settings.autonomyResumeApprovalsEnabled, false)
+  settings.missionHumanLoopEnabled = parseBoolSetting(settings.missionHumanLoopEnabled, false)
   settings.untrustedContentGuardMode = parseGuardMode(settings.untrustedContentGuardMode)
   settings.sessionResetMode = settings.sessionResetMode === 'daily' ? 'daily' : settings.sessionResetMode === 'idle' ? 'idle' : null
   settings.whatsappApprovedContacts = normalizeWhatsAppApprovedContacts(settings.whatsappApprovedContacts)

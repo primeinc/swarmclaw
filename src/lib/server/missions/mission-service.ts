@@ -23,6 +23,7 @@ import {
   loadMission,
   loadMissionEvents,
   loadMissions,
+  loadSettings,
   loadSession,
   loadTasks,
   patchMission,
@@ -74,6 +75,15 @@ function uniqueStrings(values: unknown, maxItems: number, maxChars = 180): strin
 const MISSION_LEASE_TTL_MS = 15_000
 const MISSION_LEASE_OWNER = `mission:${process.pid}:${genId(6)}`
 const recoveryState = hmrSingleton('__swarmclaw_mission_controller_recovery__', () => ({ completed: false }))
+
+function areMissionHumanLoopWaitsEnabled(): boolean {
+  const settings = loadSettings() as { missionHumanLoopEnabled?: unknown }
+  return settings.missionHumanLoopEnabled === true
+}
+
+function shouldSuppressMissionHumanLoopWait(waitKind: unknown): boolean {
+  return waitKind === 'human_reply' && !areMissionHumanLoopWaitsEnabled()
+}
 
 function isMissionTerminal(status: MissionStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
@@ -776,6 +786,28 @@ async function planMissionAction(
   }
 }
 
+function applyMissionPlannerPolicies(
+  mission: Mission,
+  decision: MissionPlannerDecisionResult,
+): MissionPlannerDecisionResult {
+  if (decision.decision !== 'wait' || !shouldSuppressMissionHumanLoopWait(decision.waitKind)) return decision
+  const currentStep = decision.currentStep || mission.currentStep || undefined
+  if (hasTerminalMissionEvidence(mission) || ((mission.taskIds?.length || 0) === 0 && (mission.childMissionIds?.length || 0) === 0)) {
+    return {
+      decision: 'verify_now',
+      confidence: decision.confidence,
+      summary: 'Mission human-loop waits are disabled, so the mission will close instead of waiting for another reply.',
+      ...(currentStep ? { currentStep } : {}),
+    }
+  }
+  return {
+    decision: 'replan',
+    confidence: decision.confidence,
+    summary: 'Mission human-loop waits are disabled, so the mission stays active instead of pausing for another reply.',
+    ...(currentStep ? { currentStep } : {}),
+  }
+}
+
 async function executeMissionPlannerDecision(
   mission: Mission,
   decision: MissionPlannerDecisionResult,
@@ -831,7 +863,7 @@ async function executeMissionPlannerDecision(
         summary: waitReason,
         sessionId: updated.sessionId || null,
         runId: updated.lastRunId || null,
-        data: updated.waitState || null,
+        data: updated.waitState ? updated.waitState as unknown as Record<string, unknown> : null,
       })
     }
     return updated
@@ -1118,8 +1150,8 @@ export function requestMissionTicksForHumanReply(params: {
 }): Mission[] {
   ensureMissionControllerRecovered()
   const candidates = listMissions({ sessionId: params.sessionId, status: 'non_terminal' }).filter((mission) => (
-    mission.waitState?.kind === 'human_reply'
-    || (mission.status === 'waiting' && mission.sessionId === params.sessionId)
+    mission.status === 'waiting'
+    && mission.waitState?.kind === 'human_reply'
   ))
   return candidates
     .map((mission) => requestMissionTick(mission.id, 'human_reply', {
@@ -1173,7 +1205,7 @@ export async function runMissionTick(
         },
       })) || mission
     }
-    const planned = await planMissionAction(mission, options)
+    const planned = applyMissionPlannerPolicies(mission, await planMissionAction(mission, options))
     return await executeMissionPlannerDecision(mission, planned, trigger)
   } finally {
     release()
@@ -1507,17 +1539,17 @@ export async function resolveMissionForTurn(params: {
     }, params.generateText ? { generateText: params.generateText } : undefined)
   } catch (err: unknown) {
     console.warn(`[missions] resolveMissionForTurn failed for ${params.session.id}: ${errorMessage(err)}`)
-    return currentMission
+    return null
   }
 
-  if (!decision) return currentMission
+  if (!decision) return null
   return applyTurnDecisionToMission(decision, {
     session: params.session,
     source: params.source === 'chat' ? 'chat' : 'connector',
     runId: params.runId || null,
     message: params.message,
     currentMission,
-  }) || currentMission
+  })
 }
 
 function missionPhaseForVerdict(decision: MissionOutcomeDecision, mission: Mission): MissionPhase {
@@ -1528,6 +1560,30 @@ function missionPhaseForVerdict(decision: MissionOutcomeDecision, mission: Missi
   if (decision.verdict === 'replan') return 'planning'
   if (mission.phase === 'planning') return 'executing'
   return 'verifying'
+}
+
+function applyMissionOutcomePolicies(
+  mission: Mission,
+  decision: MissionOutcomeDecision,
+): MissionOutcomeDecision {
+  if (decision.verdict !== 'waiting' || !shouldSuppressMissionHumanLoopWait(decision.waitKind)) return decision
+  const currentStep = decision.currentStep || mission.currentStep
+  if (hasTerminalMissionEvidence(mission) || ((mission.taskIds?.length || 0) === 0 && (mission.childMissionIds?.length || 0) === 0)) {
+    return {
+      verdict: 'completed',
+      confidence: decision.confidence,
+      phase: 'completed',
+      ...(currentStep ? { currentStep } : {}),
+      verifierSummary: 'Mission human-loop waits are disabled, so the completed work was closed instead of waiting for another reply.',
+    }
+  }
+  return {
+    verdict: 'replan',
+    confidence: decision.confidence,
+    phase: 'planning',
+    ...(currentStep ? { currentStep } : {}),
+    verifierSummary: 'Mission human-loop waits are disabled, so the controller kept the mission active instead of waiting for another reply.',
+  }
 }
 
 function summaryForOutcome(decision: MissionOutcomeDecision, fallback: string): string {
@@ -1565,6 +1621,7 @@ export async function applyMissionOutcomeForTurn(params: {
     return mission
   }
   if (!decision) return mission
+  decision = applyMissionOutcomePolicies(mission, decision)
 
   const fallbackSummary = params.error
     ? `Run ended with error: ${params.error}`
@@ -1643,7 +1700,7 @@ export async function applyMissionOutcomeForTurn(params: {
       summary: updated.waitState?.reason || outcomeSummary,
       sessionId: params.session.id,
       runId: params.runId || null,
-      data: updated.waitState || null,
+      data: updated.waitState ? updated.waitState as unknown as Record<string, unknown> : null,
     })
   } else if (decision.verdict === 'completed') {
     appendMissionEvent({

@@ -11,7 +11,7 @@ export async function GET(req: Request) {
   const limit = Math.min(200, Math.max(1, Number(searchParams.get('limit')) || 50))
 
   const all = loadActivity()
-  let entries = Object.values(all) as Array<Record<string, unknown>>
+  let entries = Object.values(all) as unknown as Array<Record<string, unknown>>
 
   if (entityType) entries = entries.filter((e) => e.entityType === entityType)
   if (entityId) entries = entries.filter((e) => e.entityId === entityId)

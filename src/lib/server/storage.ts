@@ -16,6 +16,7 @@ import { isDirectConnectorSession } from '@/lib/server/connectors/session-kind'
 import type {
   Agent,
   AppNotification,
+  AppSettings,
   BoardTask,
   EstopState,
   ExternalAgentRuntime,
@@ -71,7 +72,7 @@ class TTLCache<T> {
 }
 
 type TTLCacheStore = {
-  settings?: TTLCache<Record<string, unknown>>
+  settings?: TTLCache<AppSettings>
   agents?: TTLCache<Record<string, unknown>>
 }
 const ttlCaches: TTLCacheStore = hmrSingleton<TTLCacheStore>('__swarmclaw_ttl_caches__', () => ({}))
@@ -1506,7 +1507,7 @@ const schedulesStore = createCollectionStore('schedules')
 export function loadSchedules(): Record<string, Schedule> {
   const { result, normalizedCount } = loadCollectionWithNormalizationState('schedules')
   if (normalizedCount > 0) saveCollection('schedules', result)
-  return result as Record<string, Schedule>
+  return result as unknown as Record<string, Schedule>
 }
 export const saveSchedules = schedulesStore.save
 export function loadSchedule(id: string): Schedule | null {
@@ -1588,8 +1589,11 @@ function isProvidedSecretValue(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function buildPersistedSettings(input: Record<string, unknown>, existing?: PersistedSettingsRecord): PersistedSettingsRecord {
-  const next = cloneRecord(input) as PersistedSettingsRecord
+function buildPersistedSettings(
+  input: AppSettings | Record<string, unknown>,
+  existing?: PersistedSettingsRecord,
+): PersistedSettingsRecord {
+  const next = cloneRecord(input as Record<string, unknown>) as PersistedSettingsRecord
   Object.assign(next, normalizeRuntimeSettingFields(next))
   Object.assign(next, normalizeHeartbeatSettingFields(next))
   const encrypted = {
@@ -1635,10 +1639,10 @@ function resolveSettingsSecrets(settings: PersistedSettingsRecord): Record<strin
   return resolved
 }
 
-export function loadSettings(): Record<string, unknown> {
+export function loadSettings(): AppSettings {
   const cache = getSettingsCache()
   const cached = cache.get()
-  if (cached) return structuredClone(cached) as Record<string, unknown>
+  if (cached) return structuredClone(cached) as AppSettings
 
   const persisted = loadSingleton('settings', {}) as PersistedSettingsRecord
   const normalized = buildPersistedSettings(persisted, persisted)
@@ -1647,17 +1651,17 @@ export function loadSettings(): Record<string, unknown> {
   }
   const resolved = resolveSettingsSecrets(normalized)
   cache.set(resolved)
-  return structuredClone(resolved) as Record<string, unknown>
+  return structuredClone(resolved) as AppSettings
 }
 
-export function saveSettings(s: Record<string, unknown>) {
+export function saveSettings(s: AppSettings | Record<string, unknown>) {
   const existing = loadSingleton('settings', {}) as PersistedSettingsRecord
   saveSingleton('settings', buildPersistedSettings(s, existing))
   getSettingsCache().invalidate()
 }
 
 export function loadPublicSettings(): Record<string, unknown> {
-  const settings = cloneRecord(loadSettings())
+  const settings = cloneRecord(loadSettings() as Record<string, unknown>)
   for (const field of APP_SETTINGS_SECRET_FIELDS) {
     settings[`${field}Configured`] = isProvidedSecretValue(settings[field])
     settings[field] = null
@@ -1870,7 +1874,7 @@ export function getUsageSpendSince(minTimestamp: number): number {
     const usage = loadUsage()
     for (const records of Object.values(usage)) {
       for (const record of records || []) {
-        const rec = record as Record<string, unknown>
+        const rec = record as unknown as Record<string, unknown>
         const ts = typeof rec?.timestamp === 'number' ? rec.timestamp : 0
         if (ts < minTimestamp) continue
         const cost = typeof rec?.estimatedCost === 'number' ? rec.estimatedCost : 0

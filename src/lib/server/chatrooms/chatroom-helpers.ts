@@ -355,7 +355,7 @@ export function buildAgentSystemPromptForChatroom(agent: Agent, cwd?: string | n
   parts.push(runtimeLines.join('\n'))
 
   // 3. User & DateTime Context
-  if (settings.userPrompt) parts.push(`## User Instructions\n${settings.userPrompt}`)
+  if (typeof settings.userPrompt === 'string' && settings.userPrompt.trim()) parts.push(`## User Instructions\n${settings.userPrompt}`)
   parts.push(buildCurrentDateTimePromptContext())
 
   // 4. Soul & Core Instructions

@@ -881,7 +881,7 @@ function buildApprovalEvidence(sessionId: string): RegressionApprovalEvidence[] 
 }
 
 function listSessionSecrets(sessionId: string): Array<Record<string, unknown>> {
-  return Object.values(loadSecrets() as Record<string, Record<string, unknown>>)
+  return Object.values(loadSecrets() as unknown as Record<string, Record<string, unknown>>)
     .filter((secret) => secret.createdInSessionId === sessionId)
 }
 
@@ -925,19 +925,19 @@ function cleanupScenarioState(ctx: ScenarioContext): void {
   }
   if (agentsChanged) saveAgents(agents)
 
-  const watchJobs = loadWatchJobs() as Record<string, Record<string, unknown>>
+  const watchJobs = loadWatchJobs() as unknown as Record<string, Record<string, unknown>>
   for (const [watchJobId, watchJob] of Object.entries(watchJobs)) {
     if (watchJob?.sessionId === ctx.sessionId) deleteWatchJob(watchJobId)
   }
 
-  const delegationJobs = loadDelegationJobs() as Record<string, Record<string, unknown>>
+  const delegationJobs = loadDelegationJobs() as unknown as Record<string, Record<string, unknown>>
   for (const [jobId, job] of Object.entries(delegationJobs)) {
     if (job?.parentSessionId === ctx.sessionId || job?.childSessionId === ctx.sessionId) {
       deleteDelegationJob(jobId)
     }
   }
 
-  const secrets = loadSecrets() as Record<string, Record<string, unknown>>
+  const secrets = loadSecrets() as unknown as Record<string, Record<string, unknown>>
   let secretsChanged = false
   for (const [secretId, secret] of Object.entries(secrets)) {
     if (secret?.createdInSessionId !== ctx.sessionId) continue
@@ -946,7 +946,7 @@ function cleanupScenarioState(ctx: ScenarioContext): void {
   }
   if (secretsChanged) saveSecrets(secrets)
 
-  const schedules = loadSchedules() as Record<string, Record<string, unknown>>
+  const schedules = loadSchedules() as unknown as Record<string, Record<string, unknown>>
   let schedulesChanged = false
   for (const [scheduleId, schedule] of Object.entries(schedules)) {
     if (schedule?.createdInSessionId !== ctx.sessionId) continue
@@ -955,7 +955,7 @@ function cleanupScenarioState(ctx: ScenarioContext): void {
   }
   if (schedulesChanged) saveSchedules(schedules)
 
-  const tasks = loadTasks() as Record<string, Record<string, unknown>>
+  const tasks = loadTasks() as unknown as Record<string, Record<string, unknown>>
   let tasksChanged = false
   for (const [taskId, task] of Object.entries(tasks)) {
     if (task?.createdInSessionId !== ctx.sessionId) continue
@@ -1221,7 +1221,7 @@ async function runScheduleScenario(ctx: ScenarioContext): Promise<AgentRegressio
   ].join('\n')
 
   await runTurn(ctx, prompt)
-  const schedules = Object.values(loadSchedules() as Record<string, Record<string, unknown>>)
+  const schedules = Object.values(loadSchedules() as unknown as Record<string, Record<string, unknown>>)
     .filter((schedule) => schedule.createdInSessionId === ctx.sessionId)
     .sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0))
   const schedule = schedules[0] || null
@@ -1768,7 +1768,7 @@ async function runBlackboardDelegationScenario(ctx: ScenarioContext): Promise<Ag
 
     let createdAgents = Object.values(loadAgents({ includeTrashed: true }) as unknown as Record<string, Record<string, unknown>>)
       .filter((agent) => agent?.createdInSessionId === ctx.sessionId)
-    let createdTasks = Object.values(loadTasks() as Record<string, Record<string, unknown>>)
+    let createdTasks = Object.values(loadTasks() as unknown as Record<string, Record<string, unknown>>)
       .filter((task) => task?.createdInSessionId === ctx.sessionId)
 
     if (createdAgents.length < departments.length || createdTasks.length < departments.length || !fs.existsSync(notePath)) {
@@ -1778,7 +1778,7 @@ async function runBlackboardDelegationScenario(ctx: ScenarioContext): Promise<Ag
       )
       createdAgents = Object.values(loadAgents({ includeTrashed: true }) as unknown as Record<string, Record<string, unknown>>)
         .filter((agent) => agent?.createdInSessionId === ctx.sessionId)
-      createdTasks = Object.values(loadTasks() as Record<string, Record<string, unknown>>)
+      createdTasks = Object.values(loadTasks() as unknown as Record<string, Record<string, unknown>>)
         .filter((task) => task?.createdInSessionId === ctx.sessionId)
     }
 

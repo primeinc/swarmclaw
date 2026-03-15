@@ -1,5 +1,5 @@
 import { computeTaskFingerprint, findDuplicateTask } from '@/lib/task-dedupe'
-import type { BoardTask, BoardTaskStatus } from '@/types'
+import type { AppSettings, BoardTask, BoardTaskStatus } from '@/types'
 
 import { hasManagedAgentAssignmentInput } from '@/lib/server/agents/agent-assignment'
 import {
@@ -150,7 +150,7 @@ export interface PrepareTaskCreationOptions {
   input: Record<string, unknown>
   tasks: Record<string, BoardTask>
   now: number
-  settings?: Record<string, unknown> | null
+  settings?: AppSettings | Record<string, unknown> | null
   fallbackAgentId?: string | null
   defaultCwd?: string | null
   deriveTitleFromDescription?: boolean
@@ -226,7 +226,7 @@ export interface ApplyTaskPatchOptions {
   task: BoardTask
   patch: Record<string, unknown>
   now: number
-  settings?: Record<string, unknown> | null
+  settings?: AppSettings | Record<string, unknown> | null
   preserveCompletedAt?: boolean
   clearProjectIdWhenNull?: boolean
   invalidCompletionCommentAuthor?: string | null

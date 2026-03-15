@@ -318,7 +318,9 @@ export async function storeMemoryImage(sourcePath: string, memoryId: string): Pr
 
 let _db: ReturnType<typeof initDb> | null = null
 
-export function getMemoryLookupLimits(settingsOverride?: Record<string, unknown>): MemoryLookupLimits {
+export function getMemoryLookupLimits(
+  settingsOverride?: import('@/types').AppSettings | Record<string, unknown>,
+): MemoryLookupLimits {
   const settings = settingsOverride || loadSettings()
   return normalizeMemoryLookupLimits(settings)
 }

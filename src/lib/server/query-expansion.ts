@@ -8,7 +8,8 @@ import { getProvider } from '../providers'
 export async function expandQuery(query: string): Promise<string[]> {
   const agents = loadAgents()
   const settings = loadSettings()
-  const defaultAgent = agents[settings.defaultAgentId]
+  const defaultAgentId = typeof settings.defaultAgentId === 'string' ? settings.defaultAgentId : ''
+  const defaultAgent = defaultAgentId ? agents[defaultAgentId] : null
   if (!defaultAgent) return [query]
 
   const providerEntry = getProvider(defaultAgent.provider)

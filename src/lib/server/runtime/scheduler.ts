@@ -9,6 +9,7 @@ import { isAgentDisabled } from '@/lib/server/agents/agent-availability'
 import { prepareScheduledTaskRun } from '@/lib/server/tasks/task-lifecycle'
 import { ensureAgentThreadSession } from '@/lib/server/agents/agent-thread-session'
 import { ensureMissionForTask, noteScheduleMissionTriggered } from '@/lib/server/missions/mission-service'
+import type { Schedule } from '@/types'
 
 const TICK_INTERVAL = 60_000 // 60 seconds
 let intervalId: ReturnType<typeof setInterval> | null = null
@@ -181,7 +182,7 @@ async function tick(now = Date.now()) {
       // Wake-only: no board task, just heartbeat the agent
       upsertSchedule(schedule.id, schedule)
       const wakeSessionId = resolveScheduleWakeSessionId(schedule, agents as Record<string, unknown>)
-      noteScheduleMissionTriggered(schedule, {
+      noteScheduleMissionTriggered(schedule as unknown as Schedule, {
         wakeOnly: true,
         sessionId: wakeSessionId || schedule.createdInSessionId || null,
       })
@@ -209,7 +210,7 @@ async function tick(now = Date.now()) {
         now,
         scheduleSignature,
       })
-      const mission = noteScheduleMissionTriggered(schedule, {
+      const mission = noteScheduleMissionTriggered(schedule as unknown as Schedule, {
         taskId,
         sessionId: schedule.createdInSessionId || null,
       })
