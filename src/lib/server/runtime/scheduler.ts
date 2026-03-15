@@ -3,7 +3,7 @@ import { enqueueTask } from '@/lib/server/runtime/queue'
 import { CronExpressionParser } from 'cron-parser'
 import { pushMainLoopEventToMainSessions } from '@/lib/server/agents/main-agent-loop'
 import { getScheduleSignatureKey } from '@/lib/schedules/schedule-dedupe'
-import { requestHeartbeatNow } from '@/lib/server/runtime/heartbeat-wake'
+import { dispatchWake } from '@/lib/server/runtime/wake-dispatcher'
 import { processDueWatchJobs } from '@/lib/server/runtime/watch-jobs'
 import { isAgentDisabled } from '@/lib/server/agents/agent-availability'
 import { prepareScheduledTaskRun } from '@/lib/server/tasks/task-lifecycle'
@@ -171,7 +171,8 @@ async function tick(now = Date.now()) {
         text: `Schedule fired (wake-only): "${schedule.name}" (${schedule.id}) run #${schedule.runNumber}`,
       })
 
-      requestHeartbeatNow({
+      dispatchWake({
+        mode: 'immediate',
         agentId: schedule.agentId,
         ...(wakeSessionId ? { sessionId: wakeSessionId } : {}),
         eventId: `${schedule.id}:${schedule.runNumber}`,

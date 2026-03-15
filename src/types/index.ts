@@ -1459,6 +1459,8 @@ export interface DelegationJobRecord {
     opencode?: string | null
     gemini?: string | null
   }
+  requesterRunId?: string | null
+  childRunId?: string | null
   createdAt: number
   updatedAt: number
   startedAt?: number | null

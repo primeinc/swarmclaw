@@ -1,7 +1,7 @@
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import { z } from 'zod'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
-import { requestHeartbeatNow } from '@/lib/server/runtime/heartbeat-wake'
+import { dispatchWake } from '@/lib/server/runtime/wake-dispatcher'
 import type { ToolBuildContext } from './context'
 import type { Plugin, PluginHooks } from '@/types'
 import { registerNativeCapability } from '../native-capabilities'
@@ -20,7 +20,8 @@ async function executeScheduleWake(args: { delayMinutes: number; message: string
 
   if (delayMinutes === 0) {
     enqueueSystemEvent(context.sessionId, `[Scheduled Wake Event / Reminder] ${message}`)
-    requestHeartbeatNow({
+    dispatchWake({
+      mode: 'immediate',
       sessionId: context.sessionId,
       reason: 'scheduled_wake',
       source: 'schedule_wake',

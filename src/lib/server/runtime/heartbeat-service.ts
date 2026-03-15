@@ -8,6 +8,8 @@ import {
 } from '@/lib/runtime/heartbeat-defaults'
 import { loadAgents, loadApprovals, loadSessions, loadSettings, patchSession } from '@/lib/server/storage'
 import { buildGoalAncestrySection } from '@/lib/server/chat-execution/situational-awareness'
+import { drainDeferredWakes, hasDeferredWakes } from '@/lib/server/runtime/wake-dispatcher'
+import { buildWakeTriggerContext } from '@/lib/server/runtime/heartbeat-wake'
 import { enqueueSessionRun, getSessionRunState } from '@/lib/server/runtime/session-run-manager'
 import { log } from '@/lib/server/logger'
 import { WORKSPACE_DIR } from '@/lib/server/data-dir'
@@ -560,16 +562,39 @@ async function tickHeartbeats() {
     const hasAgentContext = !!(agent?.description || agent?.systemPrompt || agent?.soul)
     const hasCustomPrompt = cfg.prompt !== DEFAULT_HEARTBEAT_PROMPT
     const hasUserMessages = lastUserMessageAt(session) > 0
+    // Check for deferred wakes queued via dispatchWake({ mode: 'next_heartbeat' })
+    const agentId = session.agentId ? String(session.agentId) : undefined
+    const sessionHasDeferredWakes = hasDeferredWakes(agentId, session.id)
+
     // Skip heartbeat if there's nothing to drive it. An agent description alone
     // is not enough — the session needs at least one user message or an explicit
     // heartbeat goal/HEARTBEAT.md content. This prevents noise on unused sessions.
-    if (!hasExplicitGoal && !heartbeatFileContent && !hasCustomPrompt) {
+    // Exception: deferred wakes always get processed.
+    if (!sessionHasDeferredWakes && !hasExplicitGoal && !heartbeatFileContent && !hasCustomPrompt) {
       if (!hasAgentContext || !hasUserMessages) continue
     }
     const baseHeartbeatMessage = buildAgentHeartbeatPrompt(session, agent, cfg.prompt, heartbeatFileContent)
-    const heartbeatMessage = isMainSession(session)
+    let heartbeatMessage = isMainSession(session)
       ? buildMainLoopHeartbeatPrompt(session, baseHeartbeatMessage)
       : baseHeartbeatMessage
+
+    // Drain deferred wakes and inject their context into the heartbeat prompt
+    if (sessionHasDeferredWakes) {
+      const deferredWakes = drainDeferredWakes(agentId, session.id)
+      if (deferredWakes.length > 0) {
+        const deferredEvents = deferredWakes.map((w) => ({
+          eventId: w.eventId,
+          reason: w.reason || 'deferred-wake',
+          source: w.source,
+          resumeMessage: w.resumeMessage,
+          detail: w.detail,
+          occurredAt: Date.now(),
+          priority: w.priority ?? 40,
+        }))
+        const triggerContext = buildWakeTriggerContext(deferredEvents)
+        heartbeatMessage = `${heartbeatMessage}\n\n${triggerContext}`
+      }
+    }
 
     // Isolated mode: clear message history before each heartbeat for a fresh context
     const resetMode = session.sessionResetMode ?? agent?.sessionResetMode

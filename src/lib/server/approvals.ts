@@ -2,7 +2,7 @@ import { genId } from '@/lib/id'
 import { loadApprovals, upsertApproval } from './storage'
 import type { ApprovalCategory, ApprovalRequest } from '@/types'
 import { notify } from './ws-hub'
-import { requestHeartbeatNow } from '@/lib/server/runtime/heartbeat-wake'
+import { dispatchWake } from '@/lib/server/runtime/wake-dispatcher'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
 import { enqueueSessionRun } from '@/lib/server/runtime/session-run-manager'
 import { requestMissionTicksForApprovalDecision } from '@/lib/server/missions/mission-service'
@@ -67,7 +67,8 @@ function wakeForApprovalDecision(request: ApprovalRequest, approved: boolean): v
   }
 
   if (request.agentId) {
-    requestHeartbeatNow({
+    dispatchWake({
+      mode: 'immediate',
       agentId: request.agentId,
       eventId: `approval:${request.id}:${approved ? 'approved' : 'rejected'}`,
       reason,

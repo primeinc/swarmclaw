@@ -6,7 +6,7 @@ import { pushMainLoopEventToMainSessions } from '@/lib/server/agents/main-agent-
 import { notify } from '@/lib/server/ws-hub'
 import { createNotification } from '@/lib/server/create-notification'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
-import { requestHeartbeatNow } from '@/lib/server/runtime/heartbeat-wake'
+import { dispatchWake } from '@/lib/server/runtime/wake-dispatcher'
 import { validateDag, cascadeUnblock } from '@/lib/server/dag-validation'
 import { getPluginManager } from '@/lib/server/plugins'
 import { getEnabledCapabilityIds } from '@/lib/capability-selection'
@@ -118,8 +118,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       enqueueSystemEvent(tasks[id].sessionId, `Task ${tasks[id].status}: ${tasks[id].title}`)
     }
     if (tasks[id].agentId) {
-      requestHeartbeatNow({
+      dispatchWake({
+        mode: 'immediate',
         agentId: tasks[id].agentId,
+        sessionId: tasks[id].sessionId || undefined,
         eventId: `task:${id}:${tasks[id].status}`,
         reason: 'task-completed',
         source: `task:${id}`,

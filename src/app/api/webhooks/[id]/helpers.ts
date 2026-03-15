@@ -4,7 +4,8 @@ import { loadAgents, loadSessions, saveSessions, loadSettings, loadWebhooks, app
 import { WORKSPACE_DIR } from '@/lib/server/data-dir'
 import { enqueueSessionRun } from '@/lib/server/runtime/session-run-manager'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
-import { requestHeartbeatNow } from '@/lib/server/runtime/heartbeat-wake'
+import { dispatchWake } from '@/lib/server/runtime/wake-dispatcher'
+import type { WakeModeRequest } from '@/lib/server/runtime/wake-mode'
 import { notFound } from '@/lib/server/collection-helpers'
 import type { Session, WebhookRetryEntry } from '@/types'
 import { triggerWebhookWatchJobs } from '@/lib/server/runtime/watch-jobs'
@@ -14,13 +15,13 @@ import { guardUntrustedText, getUntrustedContentGuardMode } from '@/lib/server/u
 export type WebhookPostDeps = {
   enqueueRun: typeof enqueueSessionRun
   enqueueEvent: typeof enqueueSystemEvent
-  requestHeartbeat: typeof requestHeartbeatNow
+  requestHeartbeat: (opts: Omit<WakeModeRequest, 'mode'> & { mode?: WakeModeRequest['mode'] }) => void
 }
 
 export const defaultWebhookPostDeps: WebhookPostDeps = {
   enqueueRun: enqueueSessionRun,
   enqueueEvent: enqueueSystemEvent,
-  requestHeartbeat: requestHeartbeatNow,
+  requestHeartbeat: (opts) => dispatchWake({ mode: 'immediate', ...opts }),
 }
 
 function normalizeEvents(value: unknown): string[] {

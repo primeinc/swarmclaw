@@ -3,7 +3,7 @@ import fs from 'fs'
 import * as cheerio from 'cheerio'
 import { genId } from '@/lib/id'
 import type { MailboxEnvelope, WatchJob } from '@/types'
-import { requestHeartbeatNow } from '@/lib/server/runtime/heartbeat-wake'
+import { dispatchWake } from '@/lib/server/runtime/wake-dispatcher'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
 import { loadApprovals, loadTasks, loadWatchJobs, upsertWatchJob, upsertWatchJobs } from '@/lib/server/storage'
 import { notify } from '@/lib/server/ws-hub'
@@ -115,7 +115,8 @@ function wakeFromWatch(job: WatchJob, result?: Record<string, unknown> | null) {
       job.sessionId,
       `[Watch Triggered] ${summary}\n${job.resumeMessage}${detail ? `\n\nObserved:\n${detail}` : ''}`,
     )
-    requestHeartbeatNow({
+    dispatchWake({
+      mode: 'immediate',
       sessionId: job.sessionId,
       eventId: `${job.id}:${job.updatedAt || job.createdAt}`,
       reason: 'watch_job',
@@ -124,7 +125,8 @@ function wakeFromWatch(job: WatchJob, result?: Record<string, unknown> | null) {
       detail,
     })
   } else if (job.agentId) {
-    requestHeartbeatNow({
+    dispatchWake({
+      mode: 'immediate',
       agentId: job.agentId,
       eventId: `${job.id}:${job.updatedAt || job.createdAt}`,
       reason: 'watch_job',
