@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
-  <rect width="32" height="32" rx="6" fill="#7B61FF"/>
-  <text x="16" y="21" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="14" fill="#fff">N</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img"><title>Nebius</title><rect width="32" height="32" rx="6" fill="#5046E5"/><path d="M8 24V8h3.5l8 11V8H23v16h-3.5l-8-11v11H8z" fill="#FFFFFF"/></svg>

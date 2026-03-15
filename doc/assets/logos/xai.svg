@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
-  <rect width="32" height="32" rx="6" fill="#000"/>
-  <path d="M9 9l14 14M23 9L9 23" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#000000" role="img"><title>xAI</title><path d="M3.8 21h3.8l1.9-2.71l-1.9-2.71zm0-12.2L12.34 21h3.8L7.6 8.8zM17.4 21h2.49l.31-16.64l-3.11 4.44zm-6.96-9.49l1.9 2.71L20.2 3h-3.8z"/></svg>
