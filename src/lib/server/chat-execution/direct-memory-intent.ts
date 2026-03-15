@@ -157,7 +157,7 @@ function buildDirectMemoryIntentPrompt(input: DirectMemoryIntentClassifierInput)
     '- For "store" and "update", return the durable fact in "value" and a short natural user-facing acknowledgement in "acknowledgement". Do not mention tools, memory ids, storage, creation, or updating.',
     '- For "recall", return a concise search query in "query" and a short natural "missResponse". Do not mention tools.',
     '',
-    'JSON schema:',
+    'Output shape:',
     '{"action":"none|store|update|recall","confidence":0-1,"title":"optional short title","value":"for store/update","query":"for recall","acknowledgement":"for store/update","missResponse":"for recall"}',
     '',
     `user_message: ${JSON.stringify(message)}`,

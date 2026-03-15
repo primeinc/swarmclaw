@@ -39,6 +39,7 @@ import {
   markValidatedTaskCompleted,
   refreshTaskCompletionValidation,
 } from '@/lib/server/tasks/task-lifecycle'
+import { noteMissionTaskFinished, noteMissionTaskStarted } from '@/lib/server/missions/mission-service'
 
 export const collectTaskConnectorFollowupTargets = collectTaskConnectorFollowupTargetsImpl
 export const resolveTaskOriginConnectorFollowupTarget = resolveTaskOriginConnectorFollowupTargetImpl
@@ -1324,6 +1325,7 @@ export async function processNext() {
         updatedAt: Date.now(),
       }
       saveTasks(beforeStartTasks)
+      noteMissionTaskStarted(task, task.id)
       pushMainLoopEventToMainSessions({
         type: 'task_running',
         text: `Task running: "${task.title}" (${task.id}) with ${agent.name}`,
@@ -1477,6 +1479,13 @@ export async function processNext() {
           disableSessionHeartbeat(t2[taskId].sessionId)
         }
         const doneTask = t2[taskId]
+        if (doneTask?.status === 'completed') {
+          noteMissionTaskFinished(doneTask, 'completed', taskRunId)
+        } else if (doneTask?.status === 'failed') {
+          noteMissionTaskFinished(doneTask, 'failed', taskRunId)
+        } else if (doneTask?.status === 'cancelled') {
+          noteMissionTaskFinished(doneTask, 'cancelled', taskRunId)
+        }
         queueTaskAutonomyObservation({
           runId: taskRunId,
           sessionId,
@@ -1570,6 +1579,11 @@ export async function processNext() {
             })
           }
           saveTasks(t2)
+          if (t2[taskId].status === 'failed') {
+            noteMissionTaskFinished(t2[taskId], 'failed', taskRunId)
+          } else if (t2[taskId].status === 'cancelled') {
+            noteMissionTaskFinished(t2[taskId], 'cancelled', taskRunId)
+          }
           notify('tasks')
           notify('runs')
           disableSessionHeartbeat(t2[taskId].sessionId)

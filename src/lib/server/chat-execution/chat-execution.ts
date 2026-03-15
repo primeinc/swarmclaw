@@ -95,6 +95,11 @@ import {
 } from '@/lib/capability-selection'
 import { guardUntrustedText, guardUntrustedToolEvents, getUntrustedContentGuardMode } from '@/lib/server/untrusted-content'
 import { loadEstopState } from '@/lib/server/runtime/estop'
+import {
+  applyMissionOutcomeForTurn,
+  buildMissionContextBlock,
+  resolveMissionForTurn,
+} from '@/lib/server/missions/mission-service'
 
 export {
   shouldApplySessionFreshnessReset,
@@ -219,6 +224,7 @@ interface ProviderApiKeyConfig {
 export interface ExecuteChatTurnInput {
   sessionId: string
   message: string
+  missionId?: string | null
   imagePath?: string
   imageUrl?: string
   attachedFiles?: string[]
@@ -242,6 +248,7 @@ export interface ExecuteChatTurnInput {
 export interface ExecuteChatTurnResult {
   runId?: string
   sessionId: string
+  missionId?: string | null
   text: string
   persisted: boolean
   toolEvents: MessageToolEvent[]
@@ -258,6 +265,14 @@ function extractEventJson(line: string): SSEEvent | null {
   } catch {
     return null
   }
+}
+
+function joinSystemPromptBlocks(...blocks: Array<string | null | undefined>): string | undefined {
+  const joined = blocks
+    .map((block) => (typeof block === 'string' ? block.trim() : ''))
+    .filter(Boolean)
+    .join('\n\n')
+  return joined || undefined
 }
 
 export function collectToolEvent(ev: SSEEvent, bag: MessageToolEvent[]) {
@@ -667,6 +682,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
     imagePath,
     imageUrl,
     attachedFiles,
+    missionId: explicitMissionId,
     internal = false,
     runId,
     source = 'chat',
@@ -769,6 +785,17 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
   if (isAutonomousInternalRun) {
     try { syncSessionArchiveMemory(session, { agent: agentForSession }) } catch { /* archive sync is best-effort */ }
   }
+  const mission = await resolveMissionForTurn({
+    session,
+    message,
+    source,
+    internal,
+    runId: lifecycleRunId,
+    explicitMissionId: explicitMissionId || null,
+  })
+  if (mission?.id) {
+    session.missionId = mission.id
+  }
   const pluginsForRun = heartbeatStatusOnly ? [] : toolPolicy.enabledPlugins
   if (runMessageStartIndex === 0) {
     await runCapabilityHook(
@@ -785,6 +812,12 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
   let sessionForRun = JSON.stringify(sessionEnabledIds) === JSON.stringify(pluginsForRun)
     ? session
     : { ...session, tools: sessionForRunSelection.tools, extensions: sessionForRunSelection.extensions }
+  if (mission?.id) {
+    sessionForRun = {
+      ...sessionForRun,
+      missionId: mission.id,
+    }
+  }
   if (agentForSession) {
     const preferredRoute = resolvePrimaryAgentRoute(agentForSession, undefined, {
       preferredGatewayTags: session.routePreferredGatewayTags || [],
@@ -812,11 +845,12 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
   if (isHeartbeatRun && input.modelOverride) {
     sessionForRun = { ...sessionForRun, model: input.modelOverride }
   }
+  const missionContextBlock = buildMissionContextBlock(mission)
 
   if (pluginsForRun.length > 0) {
     const modelResolvePrompt = heartbeatLightContext
-      ? (buildLightHeartbeatSystemPrompt(sessionForRun) || '')
-      : (buildAgentSystemPrompt(sessionForRun) || '')
+      ? (joinSystemPromptBlocks(buildLightHeartbeatSystemPrompt(sessionForRun), missionContextBlock) || '')
+      : (joinSystemPromptBlocks(buildAgentSystemPrompt(sessionForRun), missionContextBlock) || '')
     const modelResolve = await runCapabilityBeforeModelResolve(
       {
         session: sessionForRun,
@@ -1041,8 +1075,8 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
   // to avoid duplicating tool discipline, operating guidance, and capability sections.
   // lightContext mode uses a minimal prompt for both paths to reduce token cost.
   const systemPrompt = heartbeatLightContext
-    ? buildLightHeartbeatSystemPrompt(sessionForRun)
-    : (hasPlugins ? undefined : buildAgentSystemPrompt(sessionForRun))
+    ? joinSystemPromptBlocks(buildLightHeartbeatSystemPrompt(sessionForRun), missionContextBlock)
+    : (hasPlugins ? undefined : joinSystemPromptBlocks(buildAgentSystemPrompt(sessionForRun), missionContextBlock))
   const toolEvents: MessageToolEvent[] = []
   const streamErrors: string[] = []
   const accumulatedUsage = { inputTokens: 0, outputTokens: 0, estimatedCost: 0 }
@@ -1200,6 +1234,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
     appSettings,
     internal,
     source,
+    session: sessionForRun,
   })
   if (requestedToolPreflightResponse) {
     clearInterval(partialSaveTimer)
@@ -1286,6 +1321,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
         attachedFiles,
         apiKey,
         systemPrompt,
+        extraSystemContext: missionContextBlock ? [missionContextBlock] : undefined,
         write: (raw) => parseAndEmit(raw),
         history: heartbeatHistory ?? applyContextClearBoundary(getSessionMessages(sessionId)),
         signal: abortController.signal,
@@ -1756,6 +1792,23 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
     }
 
     refreshSessionIdentityState(current, currentAgent)
+    let resolvedMissionId = mission?.id || current.missionId || null
+    if (resolvedMissionId) {
+      const updatedMission = await applyMissionOutcomeForTurn({
+        session: current,
+        missionId: resolvedMissionId,
+        source,
+        runId: lifecycleRunId,
+        message,
+        assistantText: hiddenControlOnly ? '' : textForPersistence,
+        error: errorMessage || null,
+        toolEvents: persistedToolEvents,
+      })
+      if (updatedMission?.id) {
+        resolvedMissionId = updatedMission.id
+        current.missionId = updatedMission.id
+      }
+    }
     try {
       syncSessionArchiveMemory(current, { agent: currentAgent })
     } catch { /* archive sync is best-effort */ }
@@ -1791,6 +1844,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
   return {
     runId,
     sessionId,
+    missionId: mission?.id || null,
     text: hiddenControlOnly ? '' : textForPersistence,
     persisted: assistantPersisted,
     toolEvents: persistedToolEvents,

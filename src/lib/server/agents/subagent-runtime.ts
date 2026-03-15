@@ -222,6 +222,7 @@ async function spawnSubagentImpl(
   const job = createDelegationJob({
     kind: 'subagent',
     parentSessionId: context.sessionId || null,
+    parentMissionId: typeof parent?.missionId === 'string' ? parent.missionId : null,
     agentId: input.agentId,
     task: input.message,
     cwd: input.cwd || context.cwd,

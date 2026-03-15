@@ -23,12 +23,16 @@ import type {
   GuardianCheckpoint,
   LearnedSkill,
   Message,
+  Mission,
+  MissionEvent,
   RunEventRecord,
   RunReflection,
+  Schedule,
   Session,
   SessionRunRecord,
   SkillSuggestion,
   SupervisorIncident,
+  UsageRecord,
 } from '@/types'
 import { dedup, hmrSingleton } from '@/lib/shared-utils'
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads')
@@ -234,6 +238,8 @@ const COLLECTIONS = [
   'watch_jobs',
   'delegation_jobs',
   'external_agents',
+  'missions',
+  'mission_events',
 ] as const
 
 export type StorageCollection = (typeof COLLECTIONS)[number]
@@ -327,6 +333,25 @@ function normalizeStoredRecord(table: string, value: unknown): unknown {
     return agent
   }
 
+  if (table === 'tasks') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    const task = value as StoredObject
+    if ('missionSummary' in task) delete task.missionSummary
+    return task
+  }
+
+  if (table === 'missions') {
+    return normalizeStoredMissionRecord(value)
+  }
+
+  if (table === 'mission_events') {
+    return normalizeStoredMissionEventRecord(value)
+  }
+
+  if (table === 'delegation_jobs') {
+    return normalizeStoredDelegationJobRecord(value)
+  }
+
   if (table === 'schedules') {
     return normalizeStoredScheduleRecord(value)
   }
@@ -356,6 +381,7 @@ function normalizeStoredRecord(table: string, value: unknown): unknown {
   session.extensions = normalizedCapabilities.extensions
   if ('plugins' in session) delete session.plugins
   if ('mainLoopState' in session) delete session.mainLoopState
+  if ('missionSummary' in session) delete session.missionSummary
   return session
 }
 
@@ -548,6 +574,160 @@ function normalizeStoredScheduleRecord(value: unknown): unknown {
   }
 
   return schedule
+}
+
+function normalizeStoredStringArray(value: unknown, maxItems = 128): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue
+    const trimmed = entry.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
+    if (out.length >= maxItems) break
+  }
+  return out
+}
+
+function normalizeStoredMissionRecord(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const mission = value as StoredObject
+
+  const validStatuses = new Set(['active', 'waiting', 'completed', 'failed', 'cancelled'])
+  const validPhases = new Set(['intake', 'planning', 'dispatching', 'executing', 'verifying', 'waiting', 'completed', 'failed'])
+  const validWaitKinds = new Set(['human_reply', 'approval', 'external_dependency', 'provider', 'blocked_task', 'blocked_mission', 'scheduled', 'other'])
+  const validPlannerDecisions = new Set(['dispatch_task', 'dispatch_session_turn', 'spawn_child_mission', 'wait', 'verify_now', 'complete_candidate', 'replan', 'fail_terminal', 'cancel'])
+  const validVerificationVerdicts = new Set(['continue', 'waiting', 'completed', 'failed', 'replan'])
+
+  const status = typeof mission.status === 'string' ? mission.status.trim().toLowerCase() : ''
+  mission.status = validStatuses.has(status) ? status : 'active'
+
+  const phase = typeof mission.phase === 'string' ? mission.phase.trim().toLowerCase() : ''
+  mission.phase = validPhases.has(phase) ? phase : 'planning'
+
+  const sourceRef = mission.sourceRef && typeof mission.sourceRef === 'object' && !Array.isArray(mission.sourceRef)
+    ? mission.sourceRef as StoredObject
+    : null
+  if (sourceRef && typeof sourceRef.kind === 'string') {
+    mission.sourceRef = sourceRef
+  } else if (typeof mission.sessionId === 'string' && mission.sessionId.trim()) {
+    mission.sourceRef = { kind: 'chat', sessionId: mission.sessionId.trim() }
+  } else {
+    mission.sourceRef = { kind: 'manual' }
+  }
+
+  const childMissionIds = normalizeStoredStringArray(mission.childMissionIds, 256)
+  if (childMissionIds.length > 0) mission.childMissionIds = childMissionIds
+  else delete mission.childMissionIds
+
+  const dependencyMissionIds = normalizeStoredStringArray(mission.dependencyMissionIds, 256)
+  if (dependencyMissionIds.length > 0) mission.dependencyMissionIds = dependencyMissionIds
+  else delete mission.dependencyMissionIds
+
+  const dependencyTaskIds = normalizeStoredStringArray(mission.dependencyTaskIds, 256)
+  if (dependencyTaskIds.length > 0) mission.dependencyTaskIds = dependencyTaskIds
+  else delete mission.dependencyTaskIds
+
+  const taskIds = normalizeStoredStringArray(mission.taskIds, 256)
+  if (taskIds.length > 0) mission.taskIds = taskIds
+  else delete mission.taskIds
+
+  const parentMissionId = typeof mission.parentMissionId === 'string' && mission.parentMissionId.trim()
+    ? mission.parentMissionId.trim()
+    : ''
+  if (parentMissionId) mission.parentMissionId = parentMissionId
+  else delete mission.parentMissionId
+
+  const rootMissionId = typeof mission.rootMissionId === 'string' && mission.rootMissionId.trim()
+    ? mission.rootMissionId.trim()
+    : ''
+  mission.rootMissionId = rootMissionId || (typeof mission.id === 'string' ? mission.id : null)
+
+  const waitState = mission.waitState && typeof mission.waitState === 'object' && !Array.isArray(mission.waitState)
+    ? mission.waitState as StoredObject
+    : null
+  if (waitState) {
+    const waitKind = typeof waitState.kind === 'string' ? waitState.kind.trim().toLowerCase() : ''
+    waitState.kind = validWaitKinds.has(waitKind) ? waitKind : 'other'
+    if (typeof waitState.reason !== 'string' || !waitState.reason.trim()) waitState.reason = 'Mission is waiting.'
+    const dependencyTaskId = typeof waitState.dependencyTaskId === 'string' && waitState.dependencyTaskId.trim()
+      ? waitState.dependencyTaskId.trim()
+      : ''
+    if (dependencyTaskId) waitState.dependencyTaskId = dependencyTaskId
+    else delete waitState.dependencyTaskId
+    const dependencyMissionId = typeof waitState.dependencyMissionId === 'string' && waitState.dependencyMissionId.trim()
+      ? waitState.dependencyMissionId.trim()
+      : ''
+    if (dependencyMissionId) waitState.dependencyMissionId = dependencyMissionId
+    else delete waitState.dependencyMissionId
+    const providerKey = typeof waitState.providerKey === 'string' && waitState.providerKey.trim()
+      ? waitState.providerKey.trim()
+      : ''
+    if (providerKey) waitState.providerKey = providerKey
+    else delete waitState.providerKey
+    mission.waitState = waitState
+  } else {
+    delete mission.waitState
+  }
+
+  const controllerState = mission.controllerState && typeof mission.controllerState === 'object' && !Array.isArray(mission.controllerState)
+    ? mission.controllerState as StoredObject
+    : null
+  if (controllerState) mission.controllerState = controllerState
+  else delete mission.controllerState
+
+  const plannerState = mission.plannerState && typeof mission.plannerState === 'object' && !Array.isArray(mission.plannerState)
+    ? mission.plannerState as StoredObject
+    : null
+  if (plannerState) {
+    const decision = typeof plannerState.lastDecision === 'string' ? plannerState.lastDecision.trim() : ''
+    if (!validPlannerDecisions.has(decision)) delete plannerState.lastDecision
+    mission.plannerState = plannerState
+  } else {
+    delete mission.plannerState
+  }
+
+  const verificationState = mission.verificationState && typeof mission.verificationState === 'object' && !Array.isArray(mission.verificationState)
+    ? mission.verificationState as StoredObject
+    : { candidate: false }
+  verificationState.candidate = verificationState.candidate === true
+  const requiredTaskIds = normalizeStoredStringArray(verificationState.requiredTaskIds, 128)
+  if (requiredTaskIds.length > 0) verificationState.requiredTaskIds = requiredTaskIds
+  else delete verificationState.requiredTaskIds
+  const requiredChildMissionIds = normalizeStoredStringArray(verificationState.requiredChildMissionIds, 128)
+  if (requiredChildMissionIds.length > 0) verificationState.requiredChildMissionIds = requiredChildMissionIds
+  else delete verificationState.requiredChildMissionIds
+  const requiredArtifacts = normalizeStoredStringArray(verificationState.requiredArtifacts, 128)
+  if (requiredArtifacts.length > 0) verificationState.requiredArtifacts = requiredArtifacts
+  else delete verificationState.requiredArtifacts
+  const lastVerdict = typeof verificationState.lastVerdict === 'string' ? verificationState.lastVerdict.trim().toLowerCase() : ''
+  if (validVerificationVerdicts.has(lastVerdict)) verificationState.lastVerdict = lastVerdict
+  else delete verificationState.lastVerdict
+  mission.verificationState = verificationState
+
+  return mission
+}
+
+function normalizeStoredMissionEventRecord(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const event = value as StoredObject
+  if (!event.data || typeof event.data !== 'object' || Array.isArray(event.data)) event.data = null
+  if (typeof event.source !== 'string' || !event.source.trim()) event.source = 'system'
+  return event
+}
+
+function normalizeStoredDelegationJobRecord(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const job = value as StoredObject
+  const missionId = typeof job.missionId === 'string' && job.missionId.trim() ? job.missionId.trim() : ''
+  if (missionId) job.missionId = missionId
+  else delete job.missionId
+  const parentMissionId = typeof job.parentMissionId === 'string' && job.parentMissionId.trim() ? job.parentMissionId.trim() : ''
+  if (parentMissionId) job.parentMissionId = parentMissionId
+  else delete job.parentMissionId
+  return job
 }
 
 function loadCollection(table: string): Record<string, StoredObject> {
@@ -861,6 +1041,8 @@ const JSON_FILES: Record<string, string> = {
   documents: path.join(DATA_DIR, 'documents.json'),
   webhooks: path.join(DATA_DIR, 'webhooks.json'),
   external_agents: path.join(DATA_DIR, 'external-agents.json'),
+  missions: path.join(DATA_DIR, 'missions.json'),
+  mission_events: path.join(DATA_DIR, 'mission-events.json'),
 }
 
 const MIGRATION_FLAG = path.join(DATA_DIR, '.sqlite_migrated')
@@ -1321,14 +1503,14 @@ export function patchAgent(
 
 // --- Schedules ---
 const schedulesStore = createCollectionStore('schedules')
-export function loadSchedules(): Record<string, any> {
+export function loadSchedules(): Record<string, Schedule> {
   const { result, normalizedCount } = loadCollectionWithNormalizationState('schedules')
   if (normalizedCount > 0) saveCollection('schedules', result)
-  return result
+  return result as Record<string, Schedule>
 }
 export const saveSchedules = schedulesStore.save
-export function loadSchedule(id: string): Record<string, any> | null {
-  const schedule = loadCollectionItem('schedules', id) as Record<string, any> | null
+export function loadSchedule(id: string): Schedule | null {
+  const schedule = loadCollectionItem('schedules', id) as Schedule | null
   if (!schedule) return null
   upsertCollectionItem('schedules', id, schedule)
   return schedule
@@ -1380,15 +1562,15 @@ const APP_SETTINGS_SECRET_FIELDS = [
 
 const ENCRYPTED_APP_SETTINGS_KEY = '__encryptedAppSettings'
 
-type PersistedSettingsRecord = Record<string, any> & {
+type PersistedSettingsRecord = Record<string, unknown> & {
   [ENCRYPTED_APP_SETTINGS_KEY]?: Record<string, string>
 }
 
-function cloneRecord<T extends Record<string, any>>(value: T): T {
+function cloneRecord<T extends Record<string, unknown>>(value: T): T {
   return structuredClone(value || {}) as T
 }
 
-function isPlainRecord(value: unknown): value is Record<string, any> {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
@@ -1406,7 +1588,7 @@ function isProvidedSecretValue(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function buildPersistedSettings(input: Record<string, any>, existing?: PersistedSettingsRecord): PersistedSettingsRecord {
+function buildPersistedSettings(input: Record<string, unknown>, existing?: PersistedSettingsRecord): PersistedSettingsRecord {
   const next = cloneRecord(input) as PersistedSettingsRecord
   Object.assign(next, normalizeRuntimeSettingFields(next))
   Object.assign(next, normalizeHeartbeatSettingFields(next))
@@ -1434,7 +1616,7 @@ function buildPersistedSettings(input: Record<string, any>, existing?: Persisted
   return next
 }
 
-function resolveSettingsSecrets(settings: PersistedSettingsRecord): Record<string, any> {
+function resolveSettingsSecrets(settings: PersistedSettingsRecord): Record<string, unknown> {
   const resolved = cloneRecord(settings)
   delete resolved[ENCRYPTED_APP_SETTINGS_KEY]
 
@@ -1453,7 +1635,7 @@ function resolveSettingsSecrets(settings: PersistedSettingsRecord): Record<strin
   return resolved
 }
 
-export function loadSettings(): Record<string, any> {
+export function loadSettings(): Record<string, unknown> {
   const cache = getSettingsCache()
   const cached = cache.get()
   if (cached) return structuredClone(cached) as Record<string, unknown>
@@ -1468,13 +1650,13 @@ export function loadSettings(): Record<string, any> {
   return structuredClone(resolved) as Record<string, unknown>
 }
 
-export function saveSettings(s: Record<string, any>) {
+export function saveSettings(s: Record<string, unknown>) {
   const existing = loadSingleton('settings', {}) as PersistedSettingsRecord
   saveSingleton('settings', buildPersistedSettings(s, existing))
   getSettingsCache().invalidate()
 }
 
-export function loadPublicSettings(): Record<string, any> {
+export function loadPublicSettings(): Record<string, unknown> {
   const settings = cloneRecord(loadSettings())
   for (const field of APP_SETTINGS_SECRET_FIELDS) {
     settings[`${field}Configured`] = isProvidedSecretValue(settings[field])
@@ -1563,6 +1745,25 @@ export const loadProjects = projectsStore.load
 export const saveProjects = projectsStore.save
 export const deleteProject = projectsStore.deleteItem
 
+// --- Missions ---
+const missionsStore = createCollectionStore('missions')
+export const loadMissions = missionsStore.load as () => Record<string, Mission>
+export const saveMissions = missionsStore.save as (items: Record<string, Mission>) => void
+export const loadMission = missionsStore.loadItem as (id: string) => Mission | null
+export const upsertMission = missionsStore.upsert as (id: string, value: Mission) => void
+export const patchMission = missionsStore.patch as (
+  id: string,
+  updater: (current: Mission | null) => Mission | null,
+) => Mission | null
+export const deleteMission = missionsStore.deleteItem
+
+const missionEventsStore = createCollectionStore('mission_events')
+export const loadMissionEvents = missionEventsStore.load as () => Record<string, MissionEvent>
+export const saveMissionEvents = missionEventsStore.save as (items: Record<string, MissionEvent>) => void
+export const loadMissionEvent = missionEventsStore.loadItem as (id: string) => MissionEvent | null
+export const upsertMissionEvent = missionEventsStore.upsert as (id: string, value: MissionEvent) => void
+export const upsertMissionEvents = missionEventsStore.upsertMany as (entries: Array<[string, MissionEvent]>) => void
+
 // --- Skills ---
 const skillsStore = createCollectionStore('skills')
 export const loadSkills = skillsStore.load
@@ -1644,13 +1845,13 @@ export const loadExternalAgents = externalAgentsStore.load as () => Record<strin
 export const saveExternalAgents = externalAgentsStore.save as (items: Record<string, ExternalAgentRuntime>) => void
 
 // --- Usage ---
-export function loadUsage(): Record<string, any[]> {
+export function loadUsage(): Record<string, UsageRecord[]> {
   const stmt = db.prepare('SELECT session_id, data FROM usage')
   const rows = stmt.all() as { session_id: string; data: string }[]
-  const result: Record<string, any[]> = {}
+  const result: Record<string, UsageRecord[]> = {}
   for (const row of rows) {
     if (!result[row.session_id]) result[row.session_id] = []
-    result[row.session_id].push(JSON.parse(row.data))
+    result[row.session_id].push(JSON.parse(row.data) as UsageRecord)
   }
   return result
 }
@@ -1680,7 +1881,7 @@ export function getUsageSpendSince(minTimestamp: number): number {
   }
 }
 
-export function saveUsage(u: Record<string, any[]>) {
+export function saveUsage(u: Record<string, UsageRecord[]>) {
   const del = db.prepare('DELETE FROM usage')
   const ins = db.prepare('INSERT INTO usage (session_id, data) VALUES (?, ?)')
   const transaction = db.transaction(() => {

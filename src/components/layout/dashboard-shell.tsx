@@ -152,18 +152,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // View validity check
   const isViewEnabled = useCallback((view: AppView) => {
-    if (view === 'projects') return appSettings.projectManagementEnabled !== false
-    if (view === 'tasks') return appSettings.taskManagementEnabled !== false
-    if (view === 'chatrooms') return true
-    if (view === 'schedules') return true
-    if (view === 'memory') return true
-    if (view === 'inbox') return true
-    if (view === 'connectors') return true
     if (view === 'webhooks') return extensions['http']?.enabled !== false
-    if (view === 'wallets') return true
-    if (view === 'logs') return true
     return true
-  }, [appSettings.projectManagementEnabled, appSettings.taskManagementEnabled, extensions])
+  }, [extensions])
 
   // Redirect disabled views
   useEffect(() => {

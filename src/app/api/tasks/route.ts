@@ -14,6 +14,7 @@ import { getEnabledCapabilityIds } from '@/lib/capability-selection'
 import {
   prepareTaskCreation,
 } from '@/lib/server/tasks/task-service'
+import { ensureMissionForTask, enrichTaskWithMissionSummary } from '@/lib/server/missions/mission-service'
 import '@/lib/server/builtin-plugins'
 
 export async function GET(req: Request) {
@@ -25,15 +26,18 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const includeArchived = searchParams.get('includeArchived') === 'true'
   const allTasks = loadTasks()
+  const missionTasks = Object.fromEntries(
+    Object.entries(allTasks).map(([id, task]) => [id, enrichTaskWithMissionSummary(task)]),
+  )
 
   if (includeArchived) {
-    endPerf({ count: Object.keys(allTasks).length })
-    return NextResponse.json(allTasks)
+    endPerf({ count: Object.keys(missionTasks).length })
+    return NextResponse.json(missionTasks)
   }
 
   // Exclude archived tasks by default
   const filtered: Record<string, typeof allTasks[string]> = {}
-  for (const [id, task] of Object.entries(allTasks)) {
+  for (const [id, task] of Object.entries(missionTasks)) {
     if (task.status !== 'archived') {
       filtered[id] = task
     }
@@ -172,6 +176,11 @@ export async function POST(req: Request) {
   }
 
   upsertTask(id, task)
+  const mission = ensureMissionForTask(task, { source: 'manual' })
+  const finalTask = enrichTaskWithMissionSummary({
+    ...task,
+    missionId: mission?.id || task.missionId || null,
+  })
   logActivity({ entityType: 'task', entityId: id, action: 'created', actor: 'user', summary: `Task created: "${task.title}"` })
   pushMainLoopEventToMainSessions({
     type: 'task_created',
@@ -181,5 +190,5 @@ export async function POST(req: Request) {
     enqueueTask(id)
   }
   notify('tasks')
-  return NextResponse.json(task)
+  return NextResponse.json(finalTask)
 }

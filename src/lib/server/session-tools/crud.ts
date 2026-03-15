@@ -42,6 +42,7 @@ import {
   deriveTaskTitle,
   prepareTaskCreation,
 } from '@/lib/server/tasks/task-service'
+import { ensureMissionForTask, enrichTaskWithMissionSummary } from '@/lib/server/missions/mission-service'
 import type { ToolBuildContext } from './context'
 import { safePath, findBinaryOnPath } from './context'
 import { normalizeToolInputArgs } from './normalize-tool-args'
@@ -687,6 +688,21 @@ export function buildCrudTools(bctx: ToolBuildContext): StructuredToolInterface[
               }
 
               res.save(all)
+              if (toolKey === 'manage_tasks') {
+                const mission = ensureMissionForTask(entry as BoardTask, {
+                  source: entry.sourceType === 'schedule'
+                    ? 'schedule'
+                    : entry.sourceType === 'delegation'
+                      ? 'delegation'
+                      : 'manual',
+                })
+                if (mission) {
+                  responseEntry = enrichTaskWithMissionSummary({
+                    ...(responseEntry as BoardTask),
+                    missionId: mission.id,
+                  })
+                }
+              }
               if (toolKey === 'manage_tasks' && entry.status === 'queued') {
                 const { enqueueTask } = await import('@/lib/server/runtime/queue')
                 enqueueTask(newId)

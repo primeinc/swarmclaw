@@ -20,11 +20,11 @@ import {
   registerDelegationRuntime,
   startDelegationJob,
 } from '@/lib/server/agents/delegation-jobs'
+import { loadSession } from '@/lib/server/storage'
 import { markProviderFailure, markProviderSuccess } from '../provider-health'
 import { loadRuntimeSettings } from '../runtime/runtime-settings'
 import { getSessionDepth } from '../agents/subagent-runtime'
 
-const MAX_DELEGATION_CHAIN_HOPS = 128
 const DELEGATE_BACKEND_ORDER: DelegateBackend[] = ['claude', 'codex', 'opencode', 'gemini']
 
 interface DelegateContext {
@@ -54,48 +54,6 @@ interface DelegateRuntimeState {
   child?: ChildProcess | null
   cancel?: () => void
 }
-
-function asTaskRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : null
-}
-
-function parseNonNegativeInt(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  const int = Math.trunc(value)
-  return int >= 0 ? int : null
-}
-
-function _computeDelegationDepth(
-  task: Record<string, unknown> | null,
-  tasksById: Record<string, unknown>,
-): number {
-  if (!task) return 0
-  const explicitDepth = parseNonNegativeInt(task.delegationDepth)
-  if (explicitDepth !== null) return explicitDepth
-  if (task.sourceType !== 'delegation') return 0
-
-  let depth = 1
-  let parentId = typeof task.delegatedFromTaskId === 'string' ? task.delegatedFromTaskId.trim() : ''
-  let hops = 0
-  const visited = new Set<string>()
-
-  while (parentId && hops < MAX_DELEGATION_CHAIN_HOPS && !visited.has(parentId)) {
-    visited.add(parentId)
-    const parent = asTaskRecord(tasksById[parentId])
-    if (!parent) break
-    const parentExplicitDepth = parseNonNegativeInt(parent.delegationDepth)
-    if (parentExplicitDepth !== null) {
-      depth = Math.max(depth, parentExplicitDepth + 1)
-      break
-    }
-    depth++
-    parentId = typeof parent.delegatedFromTaskId === 'string' ? parent.delegatedFromTaskId.trim() : ''
-    hops++
-  }
-
-  return depth
-}
-
 
 function buildDelegateContextFromSessionish(session: unknown): DelegateContext {
   const record = session && typeof session === 'object' ? session as Record<string, unknown> : {}
@@ -504,6 +462,7 @@ async function executeDelegateAction(args: Record<string, unknown>, bctx: Delega
   const jobId = typeof normalized.jobId === 'string' ? normalized.jobId.trim() : ''
   const waitForCompletion = normalized.waitForCompletion !== false && normalized.background !== true
   const parentSessionId = resolveDelegateSessionId(bctx)
+  const parentMissionId = parentSessionId ? loadSession(parentSessionId)?.missionId || null : null
 
   recoverStaleDelegationJobs()
 
@@ -545,6 +504,7 @@ async function executeDelegateAction(args: Record<string, unknown>, bctx: Delega
   const job = createDelegationJob({
     kind: 'delegate',
     parentSessionId,
+    parentMissionId,
     backend: requestedBackend,
     task,
     cwd: bctx.cwd || null,

@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/stores/use-app-store'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { updateAgent } from '@/lib/agents'
-import { useNavigate } from '@/lib/app/navigation'
+import { getMissionPath, useNavigate } from '@/lib/app/navigation'
+import { api } from '@/lib/app/api-client'
 import { toast } from 'sonner'
-import type { Agent, BoardTask, Schedule } from '@/types'
+import type { Agent, BoardTask, Mission, Schedule } from '@/types'
 
 function relativeDate(ts: number): string {
   const diff = Date.now() - ts
@@ -94,6 +96,7 @@ function AssignAgentPicker({ projectId, onClose }: { projectId: string; onClose:
 }
 
 export function ProjectDetail() {
+  const router = useRouter()
   const activeProjectFilter = useAppStore((s) => s.activeProjectFilter)
   const projects = useAppStore((s) => s.projects)
   const agents = useAppStore((s) => s.agents) as Record<string, Agent>
@@ -114,6 +117,10 @@ export function ProjectDetail() {
 
   const [assignPickerOpen, setAssignPickerOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [projectMissionSnapshot, setProjectMissionSnapshot] = useState<{ projectId: string | null; missions: Mission[] }>({
+    projectId: null,
+    missions: [],
+  })
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(Date.now()), 60_000)
@@ -124,6 +131,33 @@ export function ProjectDetail() {
     if (!activeProjectFilter) return
     void loadSecrets()
   }, [activeProjectFilter, loadSecrets])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!activeProjectFilter) return
+    void api<Mission[]>('GET', `/missions?projectId=${encodeURIComponent(activeProjectFilter)}&status=non_terminal&limit=8`)
+      .then((missions) => {
+        if (!cancelled) {
+          setProjectMissionSnapshot({
+            projectId: activeProjectFilter,
+            missions: Array.isArray(missions) ? missions : [],
+          })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectMissionSnapshot({
+            projectId: activeProjectFilter,
+            missions: [],
+          })
+        }
+      })
+    return () => { cancelled = true }
+  }, [activeProjectFilter])
+
+  const projectMissions = projectMissionSnapshot.projectId === activeProjectFilter
+    ? projectMissionSnapshot.missions
+    : []
 
   const project = activeProjectFilter ? projects[activeProjectFilter] : null
 
@@ -614,6 +648,73 @@ export function ProjectDetail() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-4 mb-8">
+          <div className="rounded-[16px] border border-white/[0.06] bg-white/[0.02] px-5 py-5">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div>
+                <h2 className="font-display text-[18px] font-700 tracking-[-0.02em] text-text">Active Missions</h2>
+                <p className="text-[12px] text-text-3/60 mt-1">Durable objectives currently driving work inside this project.</p>
+              </div>
+              <button
+                onClick={() => navigateTo('missions')}
+                className="shrink-0 px-3 py-2 rounded-[10px] bg-white/[0.04] text-[12px] font-600 text-text-2 hover:bg-white/[0.08] transition-all cursor-pointer border-none"
+                style={{ fontFamily: 'inherit' }}
+              >
+                Open Missions
+              </button>
+            </div>
+            {projectMissions.length === 0 ? (
+              <div className="rounded-[12px] border border-dashed border-white/[0.08] px-5 py-6 text-center">
+                <p className="text-[12px] text-text-3/45">No active project missions yet.</p>
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {projectMissions.map((mission) => (
+                  <button
+                    key={mission.id}
+                    onClick={() => router.push(getMissionPath(mission.id))}
+                    className="w-full rounded-[12px] border border-white/[0.06] bg-surface/60 px-4 py-3 text-left hover:bg-white/[0.04] transition-all cursor-pointer"
+                    style={{ fontFamily: 'inherit' }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-600 text-text truncate">{mission.objective}</div>
+                        <div className="mt-1 text-[11px] text-text-3/55 truncate">
+                          {mission.waitState?.reason || mission.currentStep || mission.plannerSummary || 'Mission active.'}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-[10px] font-700 uppercase tracking-[0.08em] text-text-3/45">{mission.status}</div>
+                        <div className="mt-1 text-[10px] text-text-3/35">{relativeDate(mission.updatedAt)}</div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-[16px] border border-white/[0.06] bg-white/[0.02] px-5 py-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[12px] font-700 uppercase tracking-[0.08em] text-text-3/60">Mission Signals</h3>
+              <span className="text-[11px] text-text-3/40">{projectMissions.length} active</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { label: 'Waiting', value: projectMissions.filter((mission) => mission.status === 'waiting').length, tone: 'text-amber-400' },
+                { label: 'Blocked', value: projectMissions.filter((mission) => mission.status === 'failed').length, tone: 'text-red-400' },
+                { label: 'Children', value: projectMissions.reduce((sum, mission) => sum + (mission.childMissionIds?.length || 0), 0), tone: 'text-sky-400' },
+                { label: 'Queued', value: projectMissions.reduce((sum, mission) => sum + (mission.taskIds?.length || 0), 0), tone: 'text-text-2' },
+              ].map((item) => (
+                <div key={item.label} className="rounded-[12px] border border-white/[0.06] bg-surface/60 px-3 py-3">
+                  <div className={`text-[18px] font-display font-700 tracking-[-0.02em] ${item.tone}`}>{item.value}</div>
+                  <div className="mt-1 text-[10px] font-600 uppercase tracking-[0.08em] text-text-3/45">{item.label}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

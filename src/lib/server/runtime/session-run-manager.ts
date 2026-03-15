@@ -728,6 +728,7 @@ async function drainExecution(executionKey: string): Promise<void> {
   })
 
   let runtimeTimer: ReturnType<typeof setTimeout> | null = null
+  let finishedMissionId: string | null = null
   if (next.maxRuntimeMs && next.maxRuntimeMs > 0) {
     runtimeTimer = setTimeout(() => {
       next.signalController.abort()
@@ -756,6 +757,8 @@ async function drainExecution(executionKey: string): Promise<void> {
     next.run.status = aborted ? 'cancelled' : (failed ? 'failed' : 'completed')
     next.run.endedAt = next.run.endedAt || now()
     next.run.error = aborted ? (next.run.error || 'Cancelled') : result.error
+    next.run.missionId = result.missionId || next.run.missionId || null
+    finishedMissionId = next.run.missionId || null
     next.run.resultPreview = result.text?.slice(0, 280)
     syncRunRecord(next.run)
     emitRunMeta(next, next.run.status, {
@@ -818,6 +821,7 @@ async function drainExecution(executionKey: string): Promise<void> {
     next.run.status = aborted ? 'cancelled' : 'failed'
     next.run.endedAt = now()
     next.run.error = errorMessage(err)
+    finishedMissionId = next.run.missionId || null
     syncRunRecord(next.run)
     emitRunMeta(next, next.run.status, { error: next.run.error })
     log.error('session-run', `Run failed ${next.run.id}`, {
@@ -839,6 +843,25 @@ async function drainExecution(executionKey: string): Promise<void> {
     if (runtimeTimer) clearTimeout(runtimeTimer)
     state.runningByExecution.delete(executionKey)
     reconcileSessionActivityLease(next.run.sessionId)
+    if (finishedMissionId && next.run.source !== 'chat') {
+      queueMicrotask(() => {
+        import('@/lib/server/missions/mission-service')
+          .then(({ loadMissionById, requestMissionTick }) => {
+            const mission = loadMissionById(finishedMissionId)
+            if (!mission) return
+            if (mission.status !== 'active') return
+            if (mission.phase === 'dispatching' || mission.phase === 'executing') return
+            requestMissionTick(finishedMissionId as string, 'run_drained', {
+              runId: next.run.id,
+              source: next.run.source,
+              status: next.run.status,
+            })
+          })
+          .catch(() => {
+            // Mission continuation is best-effort only.
+          })
+      })
+    }
     void drainExecution(executionKey)
   }
 }
@@ -855,6 +878,7 @@ function findDedupeMatch(sessionId: string, dedupeKey?: string): QueueEntry | nu
 export interface EnqueueSessionRunInput {
   sessionId: string
   message: string
+  missionId?: string | null
   imagePath?: string
   imageUrl?: string
   attachedFiles?: string[]
@@ -1046,6 +1070,7 @@ export function enqueueSessionRun(input: EnqueueSessionRunInput): EnqueueSession
   const run: SessionRunRecord = {
     id: runId,
     sessionId: input.sessionId,
+    missionId: input.missionId ?? loadSession(input.sessionId)?.missionId ?? null,
     source,
     internal,
     mode,
@@ -1136,6 +1161,7 @@ function toQueuedTurn(entry: QueueEntry, index: number): SessionQueuedTurn {
   return {
     runId: entry.run.id,
     sessionId: entry.run.sessionId,
+    missionId: entry.run.missionId || null,
     text: entry.message,
     queuedAt: entry.run.queuedAt,
     position: index + 1,

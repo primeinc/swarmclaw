@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/stores/use-app-store'
-import { useNavigate } from '@/lib/app/navigation'
+import { getMissionPath, useNavigate } from '@/lib/app/navigation'
 import { updateTask, archiveTask } from '@/lib/tasks'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
@@ -26,6 +27,7 @@ export function TaskCard({ task, selectionMode, selected, onToggleSelect, index 
   const loadTasks = useAppStore((s) => s.loadTasks)
   const setCurrentAgent = useAppStore((s) => s.setCurrentAgent)
   const navigateTo = useNavigate()
+  const router = useRouter()
   const [dragging, setDragging] = useState(false)
   const [confirmArchive, setConfirmArchive] = useState(false)
   const [allowDrag, setAllowDrag] = useState(false)
@@ -164,6 +166,41 @@ export function TaskCard({ task, selectionMode, selected, onToggleSelect, index 
 
       {task.description && (
         <p className="text-[12px] text-text-3 line-clamp-2 mb-3">{task.description}</p>
+      )}
+
+      {task.missionSummary && (
+        <div className="mb-3 rounded-[12px] border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-700 uppercase tracking-[0.08em] text-text-3/68">Mission</span>
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-700 uppercase tracking-[0.08em] ${
+                task.missionSummary.status === 'waiting' || task.missionSummary.status === 'failed' || task.missionSummary.status === 'cancelled'
+                  ? 'bg-amber-500/12 text-amber-300'
+                  : task.missionSummary.status === 'completed'
+                    ? 'bg-emerald-500/12 text-emerald-300'
+                    : 'bg-sky-500/12 text-sky-300'
+              }`}>
+                {task.missionSummary.status}
+              </span>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  router.push(getMissionPath(task.missionSummary?.id || null))
+                }}
+                className="rounded-[8px] border border-white/[0.08] px-2 py-1 text-[10px] font-700 uppercase tracking-[0.08em] text-text-2 transition-colors hover:bg-white/[0.05]"
+              >
+                Open
+              </button>
+            </div>
+          </div>
+          <div className="text-[12px] font-600 text-text line-clamp-2">{task.missionSummary.objective}</div>
+          {(task.missionSummary.waitingReason || task.missionSummary.currentStep) && (
+            <div className="mt-1 text-[11px] text-text-3/70 line-clamp-2">
+              {task.missionSummary.waitingReason || task.missionSummary.currentStep}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Tags */}

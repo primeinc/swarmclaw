@@ -8,6 +8,7 @@ import { processDueWatchJobs } from '@/lib/server/runtime/watch-jobs'
 import { isAgentDisabled } from '@/lib/server/agents/agent-availability'
 import { prepareScheduledTaskRun } from '@/lib/server/tasks/task-lifecycle'
 import { ensureAgentThreadSession } from '@/lib/server/agents/agent-thread-session'
+import { ensureMissionForTask, noteScheduleMissionTriggered } from '@/lib/server/missions/mission-service'
 
 const TICK_INTERVAL = 60_000 // 60 seconds
 let intervalId: ReturnType<typeof setInterval> | null = null
@@ -180,6 +181,10 @@ async function tick(now = Date.now()) {
       // Wake-only: no board task, just heartbeat the agent
       upsertSchedule(schedule.id, schedule)
       const wakeSessionId = resolveScheduleWakeSessionId(schedule, agents as Record<string, unknown>)
+      noteScheduleMissionTriggered(schedule, {
+        wakeOnly: true,
+        sessionId: wakeSessionId || schedule.createdInSessionId || null,
+      })
 
       const wakeMessage = schedule.message || `Schedule triggered: ${schedule.name}`
       pushMainLoopEventToMainSessions({
@@ -204,8 +209,16 @@ async function tick(now = Date.now()) {
         now,
         scheduleSignature,
       })
+      const mission = noteScheduleMissionTriggered(schedule, {
+        taskId,
+        sessionId: schedule.createdInSessionId || null,
+      })
+      if (mission) {
+        tasks[taskId].missionId = mission.id
+      }
 
       upsertTask(taskId, tasks[taskId])
+      ensureMissionForTask(tasks[taskId], { source: 'schedule' })
       upsertSchedule(schedule.id, schedule)
 
       enqueueTask(taskId)

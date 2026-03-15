@@ -155,6 +155,7 @@ interface StreamAgentChatOpts {
   attachedFiles?: string[]
   apiKey: string | null
   systemPrompt?: string
+  extraSystemContext?: string[]
   write: (data: string) => void
   history: Message[]
   fallbackCredentialIds?: string[]
@@ -592,7 +593,7 @@ export async function streamAgentChat(opts: StreamAgentChatOpts): Promise<Stream
 
 async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAgentChatResult> {
   const startTs = Date.now()
-  const { session, message, imagePath, imageUrl, attachedFiles, apiKey, systemPrompt, write, history, fallbackCredentialIds, signal } = opts
+  const { session, message, imagePath, imageUrl, attachedFiles, apiKey, systemPrompt, extraSystemContext, write, history, fallbackCredentialIds, signal } = opts
   const isConnectorSession = isDirectConnectorSession(session)
   const rawPlugins = getEnabledCapabilityIds(session)
   const hasShellCapability = rawPlugins.some((toolId) => ['shell', 'execute_command'].includes(String(toolId)))
@@ -630,6 +631,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
     appSettings: settings,
     internal: false,
     source: 'chat',
+    session,
   })
   if (requestedToolPreflightResponse) {
     write(`data: ${JSON.stringify({ t: 'd', text: requestedToolPreflightResponse })}\n\n`)
@@ -754,6 +756,15 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
       if (awarenessBlock) promptParts.push(awarenessBlock)
     } catch {
       // If agent registry fails, continue without blocking the run.
+    }
+  }
+
+  if (Array.isArray(extraSystemContext)) {
+    for (const block of extraSystemContext) {
+      if (typeof block !== 'string') continue
+      const trimmed = block.trim()
+      if (!trimmed) continue
+      promptParts.push(trimmed)
     }
   }
 

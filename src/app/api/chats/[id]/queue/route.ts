@@ -38,6 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const queued = enqueueSessionRun({
     sessionId: id,
+    missionId: session.missionId || null,
     message,
     imagePath,
     imageUrl,

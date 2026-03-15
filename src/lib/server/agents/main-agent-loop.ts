@@ -4,6 +4,7 @@ import { mergeGoalContracts, parseGoalContractFromText, parseMainLoopPlan, parse
 import { assessAutonomyRun } from '@/lib/server/autonomy/supervisor-reflection'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
 import { loadSessions, loadSettings } from '@/lib/server/storage'
+import { buildMissionHeartbeatPrompt as buildMissionHeartbeatPromptFromMission, getMissionForSession } from '@/lib/server/missions/mission-service'
 
 const LEGACY_META_LINE_RE = /\[(?:MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]\s*(\{[^\n]*\})?/i
 const HEARTBEAT_META_RE = /\[AGENT_HEARTBEAT_META\]\s*(\{[^\n]*\})/i
@@ -700,6 +701,12 @@ export function isMainSession(session: unknown): boolean {
 export function buildMainLoopHeartbeatPrompt(session: unknown, fallbackPrompt: string): string {
   const candidate = asSession(session)
   if (!candidate?.id) return fallbackPrompt
+  const persistedSession = loadSessions()[String(candidate.id)] as Session | undefined
+  const missionPrompt = buildMissionHeartbeatPromptFromMission(
+    persistedSession || candidate as Session,
+    fallbackPrompt,
+  )
+  if (missionPrompt) return missionPrompt
   const state = getOrCreateState(String(candidate.id))
   if (!state) return fallbackPrompt
   const latestExternalGoal = extractLatestGoal(Array.isArray(candidate.messages) ? candidate.messages as Message[] : [])
@@ -841,6 +848,7 @@ export function handleMainLoopRunResult(input: HandleMainLoopRunResultInput): Ma
   const shouldCaptureMessageGoal = !input.internal
   const messageGoal = shouldCaptureMessageGoal ? parseGoalContractFromText(input.message || '') : null
   const nowTs = now()
+  const mission = session ? getMissionForSession(session) : null
 
   if (messageGoal) state.goalContract = mergeGoalContracts(state.goalContract, messageGoal)
   if (!state.goal && shouldCaptureMessageGoal) state.goal = cleanMultiline(input.message, 900)
@@ -940,8 +948,32 @@ export function handleMainLoopRunResult(input: HandleMainLoopRunResultInput): Ma
   const needsReplan = review?.needs_replan === true || ((review?.confidence ?? 1) < 0.45)
   const limit = followupLimit()
 
+  if (mission) {
+    state.goal = cleanMultiline(mission.objective, 900)
+    state.missionTaskId = mission.rootTaskId || null
+    state.summary = cleanMultiline(mission.verifierSummary || mission.plannerSummary || state.summary, 500)
+    state.nextAction = cleanText(mission.currentStep, 280) || null
+    state.currentPlanStep = cleanText(mission.currentStep, 280) || null
+    state.planSteps = mission.currentStep ? [mission.currentStep] : []
+    state.status = mission.status === 'completed'
+      ? 'ok'
+      : mission.status === 'waiting' || mission.status === 'failed' || mission.status === 'cancelled'
+        ? 'blocked'
+        : 'progress'
+    state.paused = mission.status === 'waiting' || mission.status === 'failed' || mission.status === 'cancelled'
+  }
+
   let followup: MainLoopFollowupRequest | null = null
-  if (isDirectUserChat) {
+  if (mission) {
+    state.followupChainCount = 0
+    if (mission.status === 'completed') {
+      state.status = 'ok'
+      state.paused = false
+    }
+    if (mission.status === 'waiting' || mission.status === 'failed' || mission.status === 'cancelled') {
+      state.paused = true
+    }
+  } else if (isDirectUserChat) {
     state.followupChainCount = 0
     if (successfulChatDelivery) {
       state.status = 'ok'

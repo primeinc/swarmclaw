@@ -160,6 +160,23 @@ body {
   letter-spacing: -0.01em;
 }
 
+button:not(:disabled),
+a[href],
+summary,
+label[for],
+label:has(input:not(:disabled)),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 /* Scrollbar */
 * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -405,8 +422,8 @@ textarea:hover::-webkit-scrollbar { width: 6px; }
 
 .msg-content ul, .msg-content ol {
   margin: 8px 0 10px;
-  padding-left: 20px;
-  list-style-position: outside;
+  padding-left: 0;
+  list-style-position: inside;
 }
 .msg-content li { margin-bottom: 4px; line-height: 1.65; }
 .msg-content li::marker { color: var(--color-accent-bright); }

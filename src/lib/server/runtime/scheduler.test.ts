@@ -197,4 +197,90 @@ describe('scheduler wake targeting', () => {
     assert.deepEqual(output.systemEvents, [])
     assert.deepEqual(output.deliveryModes, ['silent'])
   })
+
+  it('reuses a persistent mission for scheduled task runs', () => {
+    const output = runSchedulerWithTempDataDir(`
+      const storageMod = await import('@/lib/server/storage')
+      const schedulerMod = await import('@/lib/server/runtime/scheduler')
+      const storage = storageMod.default || storageMod
+      const scheduler = schedulerMod.default || schedulerMod
+
+      const now = Date.now()
+      storage.saveAgents({
+        'agent-1': {
+          id: 'agent-1',
+          name: 'Scheduler Agent',
+          provider: 'ollama',
+          model: 'test-model',
+          systemPrompt: 'test',
+          threadSessionId: 'thread-main',
+        },
+      })
+
+      storage.saveSessions({
+        'thread-main': {
+          id: 'thread-main',
+          name: 'Thread Main',
+          cwd: process.env.WORKSPACE_DIR,
+          user: 'tester',
+          provider: 'ollama',
+          model: 'test-model',
+          messages: [],
+          createdAt: now - 10_000,
+          lastActiveAt: now - 5_000,
+          active: true,
+          currentRunId: null,
+          agentId: 'agent-1',
+          shortcutForAgentId: 'agent-1',
+        },
+      })
+
+      storage.saveSchedules({
+        'sched-task': {
+          id: 'sched-task',
+          name: 'Generate nightly report',
+          agentId: 'agent-1',
+          taskPrompt: 'Generate the nightly report and summarize the changes.',
+          scheduleType: 'interval',
+          intervalMs: 60000,
+          status: 'active',
+          runAt: now - 1_000,
+          nextRunAt: now - 1_000,
+          createdInSessionId: 'thread-main',
+          createdAt: now - 10_000,
+          updatedAt: now - 10_000,
+        },
+      })
+
+      await scheduler.runSchedulerTickForTests(now)
+      const afterFirst = storage.loadSchedules()['sched-task']
+      const taskId = afterFirst.linkedTaskId
+      const firstTask = storage.loadTasks()[taskId]
+
+      afterFirst.nextRunAt = now - 1_000
+      storage.upsertSchedule('sched-task', afterFirst)
+      if (firstTask) {
+        firstTask.status = 'completed'
+        firstTask.completedAt = now
+        firstTask.updatedAt = now
+        storage.upsertTask(taskId, firstTask)
+      }
+
+      await scheduler.runSchedulerTickForTests(now + 61_000)
+      const afterSecond = storage.loadSchedules()['sched-task']
+      const secondTask = storage.loadTasks()[afterSecond.linkedTaskId]
+
+      console.log(JSON.stringify({
+        linkedMissionIdFirst: afterFirst.linkedMissionId || null,
+        linkedMissionIdSecond: afterSecond.linkedMissionId || null,
+        firstTaskMissionId: firstTask?.missionId || null,
+        secondTaskMissionId: secondTask?.missionId || null,
+      }))
+    `)
+
+    assert.ok(output.linkedMissionIdFirst)
+    assert.equal(output.linkedMissionIdSecond, output.linkedMissionIdFirst)
+    assert.equal(output.firstTaskMissionId, output.linkedMissionIdFirst)
+    assert.equal(output.secondTaskMissionId, output.linkedMissionIdFirst)
+  })
 })

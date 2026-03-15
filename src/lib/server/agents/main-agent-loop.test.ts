@@ -260,6 +260,92 @@ describe('main-agent-loop', () => {
     assert.equal(output.followupChainCount, 0)
   })
 
+  it('prefers mission state over legacy heartbeat tags when a durable mission exists', () => {
+    const output = runWithTempDataDir(`
+      const storageMod = await import('@/lib/server/storage')
+      const mainLoopMod = await import('@/lib/server/agents/main-agent-loop')
+      const storage = storageMod.default || storageMod
+      const mainLoop = mainLoopMod.default || mainLoopMod
+
+      storage.saveAgents({
+        'agent-a': {
+          id: 'agent-a',
+          name: 'Agent A',
+          provider: 'openai',
+          model: 'gpt-test',
+        },
+      })
+
+      storage.saveSessions({
+        main: {
+          id: 'main',
+          name: 'Main Agent Thread',
+          shortcutForAgentId: 'agent-a',
+          cwd: process.cwd(),
+          user: 'tester',
+          provider: 'openai',
+          model: 'gpt-test',
+          claudeSessionId: null,
+          messages: [],
+          createdAt: 1,
+          lastActiveAt: 1,
+          sessionType: 'human',
+          agentId: 'agent-a',
+          heartbeatEnabled: true,
+          missionId: 'mission-1',
+        },
+      })
+
+      storage.saveMissions({
+        'mission-1': {
+          id: 'mission-1',
+          source: 'heartbeat',
+          objective: 'Ship the autonomy hardening release',
+          status: 'active',
+          phase: 'executing',
+          sessionId: 'main',
+          agentId: 'agent-a',
+          taskIds: [],
+          currentStep: 'Verify the release checklist',
+          plannerSummary: 'Use the mission controller instead of legacy tags.',
+          verifierSummary: null,
+          blockerSummary: null,
+          waitState: null,
+          createdAt: 1,
+          updatedAt: Date.now(),
+        },
+      })
+
+      const prompt = mainLoop.buildMainLoopHeartbeatPrompt(storage.loadSessions().main, 'fallback heartbeat')
+      const followup = mainLoop.handleMainLoopRunResult({
+        sessionId: 'main',
+        message: 'Heartbeat tick',
+        internal: true,
+        source: 'heartbeat',
+        resultText: [
+          'I did some work.',
+          '[MAIN_LOOP_PLAN]{"steps":["stale step"],"current_step":"stale step"}',
+          '[AGENT_HEARTBEAT_META]{"goal":"stale goal","status":"ok","next_action":"do nothing"}',
+        ].join('\\n'),
+      })
+      const state = mainLoop.getMainLoopStateForSession('main')
+
+      console.log(JSON.stringify({
+        promptIncludesMission: prompt.includes('Ship the autonomy hardening release'),
+        promptIncludesLegacyPlanTags: prompt.includes('[MAIN_LOOP_PLAN]'),
+        stateGoal: state?.goal || null,
+        stateNextAction: state?.nextAction || null,
+        followupMessage: followup?.message || null,
+      }))
+    `)
+
+    assert.equal(output.promptIncludesMission, true)
+    assert.equal(output.promptIncludesLegacyPlanTags, false)
+    assert.equal(output.stateGoal, 'Ship the autonomy hardening release')
+    assert.equal(output.stateNextAction, 'Verify the release checklist')
+    assert.equal(output.followupMessage, null)
+  })
+
   it('does not let internal heartbeat prompts rewrite the stored goal contract', () => {
     const output = runWithTempDataDir(`
       const storageMod = await import('@/lib/server/storage')

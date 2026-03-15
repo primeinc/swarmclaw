@@ -25,6 +25,10 @@ import { formatMessageTimestamp } from '@/lib/chat/chat-display'
 
 /** Parse delegation-source metadata prefix from system messages */
 const DELEGATION_SOURCE_RE = /^\[delegation-source:([^:]*):([^:]*):([^\]]*)\]/
+const UPLOAD_IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|avif)$/i
+const UPLOAD_VIDEO_RE = /\.(mp4|webm|mov|avi)$/i
+const UPLOAD_PDF_RE = /\.pdf$/i
+
 function parseDelegationSource(text: string): { delegatorId: string; delegatorName: string; delegatorAvatarSeed: string; rest: string } | null {
   const m = text.match(DELEGATION_SOURCE_RE)
   if (!m) return null
@@ -81,6 +85,79 @@ function heartbeatSummary(text: string): string {
     .trim()
   if (!clean) return 'No new status update.'
   return clean.length > 180 ? `${clean.slice(0, 180)}...` : clean
+}
+
+function normalizeUploadMediaKey(url: string): string {
+  const pathname = String(url || '').split('?')[0]
+  const basename = pathname.split('/').pop() || pathname
+  return basename.replace(/^\d+-/, '')
+}
+
+function extractReferencedUploadMediaKeys(text: string): Set<string> {
+  const urls = new Set<string>()
+  if (!text) return urls
+  for (const match of text.matchAll(/\((\/api\/uploads\/[^)\s]+)\)/g)) {
+    const url = match[1]
+    if (UPLOAD_IMAGE_RE.test(url) || UPLOAD_VIDEO_RE.test(url) || UPLOAD_PDF_RE.test(url)) {
+      urls.add(normalizeUploadMediaKey(url))
+    }
+  }
+  return urls
+}
+
+function flattenMarkdownNodeText(node: unknown): string {
+  if (!node || typeof node !== 'object') return ''
+  if (Array.isArray(node)) return node.map(flattenMarkdownNodeText).join('')
+  const candidate = node as { type?: string; value?: unknown; children?: unknown[] }
+  if (candidate.type === 'text' && typeof candidate.value === 'string') return candidate.value
+  if (!Array.isArray(candidate.children)) return ''
+  return candidate.children.map(flattenMarkdownNodeText).join('')
+}
+
+function collectInlinePreviewLinks(node: unknown): Array<{ href: string; label: string; type: 'image' | 'video' | 'pdf' }> {
+  const links: Array<{ href: string; label: string; type: 'image' | 'video' | 'pdf' }> = []
+  const seen = new Set<string>()
+
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+
+    const candidate = value as {
+      type?: string
+      tagName?: string
+      properties?: Record<string, unknown>
+      children?: unknown[]
+    }
+
+    if (candidate.type === 'element' && candidate.tagName === 'a') {
+      const href = typeof candidate.properties?.href === 'string' ? candidate.properties.href : ''
+      const key = normalizeUploadMediaKey(href)
+      if (href.startsWith('/api/uploads/') && !seen.has(key)) {
+        let type: 'image' | 'video' | 'pdf' | null = null
+        if (UPLOAD_IMAGE_RE.test(href)) type = 'image'
+        else if (UPLOAD_VIDEO_RE.test(href)) type = 'video'
+        else if (UPLOAD_PDF_RE.test(href)) type = 'pdf'
+        if (type) {
+          seen.add(key)
+          links.push({
+            href,
+            label: flattenMarkdownNodeText(candidate.children || []).trim() || 'Download',
+            type,
+          })
+        }
+      }
+    }
+
+    if (Array.isArray(candidate.children)) {
+      candidate.children.forEach(visit)
+    }
+  }
+
+  visit(node)
+  return links
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -309,6 +386,20 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
   const displayText = rawDisplayText
     ? rawDisplayText.split('\n').filter((l) => !/\[(MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]/.test(l)).join('\n').trim()
     : ''
+  const hasDisplayText = displayText.length > 0
+  const referencedUploadMediaKeys = useMemo(
+    () => extractReferencedUploadMediaKeys(displayText),
+    [displayText],
+  )
+  const unreferencedToolMedia = useMemo(() => {
+    if (!allToolMedia) return null
+    const images = allToolMedia.images.filter((img) => !referencedUploadMediaKeys.has(normalizeUploadMediaKey(img.url)))
+    const videos = allToolMedia.videos.filter((vid) => !referencedUploadMediaKeys.has(normalizeUploadMediaKey(vid.url)))
+    const pdfs = allToolMedia.pdfs.filter((file) => !referencedUploadMediaKeys.has(normalizeUploadMediaKey(file.url)))
+    const files = allToolMedia.files
+    if (!images.length && !videos.length && !pdfs.length && !files.length) return null
+    return { images, videos, pdfs, files }
+  }, [allToolMedia, referencedUploadMediaKeys])
 
   const handleOpenAttachmentImage = useCallback(({ url, filename }: { url: string; filename: string }) => {
     setPreviewContent({ type: 'image', url, title: filename })
@@ -325,13 +416,14 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
   const connectorMeta = connectorThreadMeta(message, isUser)
   const hasPrimaryAttachments = Boolean(message.imagePath || message.imageUrl || message.attachedFiles?.length)
   const shouldRenderBubbleShell = hasPrimaryAttachments
+    || Boolean(allToolMedia)
     || Boolean(walletRequest)
     || Boolean(walletActionRequest)
     || Boolean(installRequest)
     || Boolean(scaffoldRequest)
     || isPluginUI
     || isHeartbeat
-    || Boolean(displayText)
+    || hasDisplayText
   const canCopy = copySourceText.trim().length > 0
   const showActions = canCopy
     || (typeof messageIndex === 'number' && Boolean(onToggleBookmark))
@@ -446,10 +538,8 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
       ) : shouldRenderBubbleShell ? (
         /* Message bubble */
         <div className={`${isStructured ? 'max-w-[92%] md:max-w-[85%]' : 'max-w-[85%] md:max-w-[72%]'} ${isUser ? 'bubble-user px-5 py-3.5' : isHeartbeat ? 'bubble-ai px-4 py-3' : 'bubble-ai px-5 py-3.5'}`}>
-          {renderAttachments(message, isDesktop ? handleOpenAttachmentImage : undefined)}
-
           {walletRequest ? (
-            <div className="flex flex-col gap-3 p-4 rounded-[18px] bg-sky-500/[0.03] border border-sky-500/20 shadow-[0_0_20px_rgba(14,165,233,0.05)]">
+          <div className="flex flex-col gap-3 p-4 rounded-[18px] bg-sky-500/[0.03] border border-sky-500/20 shadow-[0_0_20px_rgba(14,165,233,0.05)]">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-5 h-5 rounded-full bg-sky-500/20 flex items-center justify-center text-sky-400">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -669,7 +759,7 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
               </div>
             )}
           </div>
-        ) : (
+        ) : hasDisplayText ? (
           <div className={`msg-content text-[15px] md:text-[14px] break-words ${liveStreamActive ? 'streaming-cursor' : ''} ${isUser ? 'leading-[1.6] text-white/95' : 'leading-[1.7] text-text'}`}>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
@@ -677,6 +767,41 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
               components={{
                 pre({ children }) {
                   return <pre>{children}</pre>
+                },
+                p({ node, children }) {
+                  const previews = collectInlinePreviewLinks(node)
+                  if (previews.length === 0) return <p>{children}</p>
+                  return (
+                    <>
+                      <p>{children}</p>
+                      <div className="mt-3 mb-1 flex flex-col gap-3">
+                        {previews.map((preview) => (
+                          <span key={`${preview.type}:${preview.href}`} className="block max-w-full">
+                            {preview.type === 'image' && (
+                              <a href={preview.href} download target="_blank" rel="noopener noreferrer" className="block max-w-full">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={preview.href}
+                                  alt={preview.label}
+                                  loading="lazy"
+                                  className="max-w-[400px] rounded-[10px] border border-white/10 hover:border-white/25 transition-colors"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                />
+                              </a>
+                            )}
+                            {preview.type === 'video' && (
+                              <video src={preview.href} controls playsInline preload="none" className="max-w-full rounded-[10px] border border-white/10" />
+                            )}
+                            {preview.type === 'pdf' && (
+                              <span className="block w-full max-w-[520px] overflow-hidden rounded-[10px] border border-white/10">
+                                <iframe src={preview.href} loading="lazy" className="h-[360px] w-full bg-white" title={preview.label} />
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )
                 },
                 code({ className, children }) {
                   const isBlock = className?.startsWith('language-') || className?.startsWith('hljs')
@@ -747,7 +872,8 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
                   }
                   const isUpload = href.startsWith('/api/uploads/')
                   if (isUpload) {
-                    const uploadIsHtml = /\.(html?|svg)$/i.test(href.split('?')[0])
+                    const uploadPath = href.split('?')[0]
+                    const uploadIsHtml = /\.(html?)$/i.test(uploadPath)
                     return (
                       <span className="inline-flex items-center gap-1.5">
                         <a href={href} download className="inline-flex items-center gap-1.5 text-sky-400 hover:text-sky-300 underline">
@@ -794,86 +920,88 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
               {displayText}
             </ReactMarkdown>
           </div>
+          ) : null
+          }
+
+          {renderAttachments(message, isDesktop ? handleOpenAttachmentImage : undefined)}
+
+          {unreferencedToolMedia && (
+            <div className={`flex flex-col gap-2 ${hasDisplayText || hasPrimaryAttachments ? 'mt-3' : ''}`}>
+              {unreferencedToolMedia.images.map((img, i) => (
+                <div key={`tm-img-${i}`} className="relative group/img">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.url}
+                    alt={img.name}
+                    loading="lazy"
+                    className="max-w-[400px] rounded-[10px] border border-white/10 cursor-pointer hover:border-white/25 transition-all"
+                    onClick={() => {
+                      import('@/stores/use-chat-store').then(({ useChatStore }) =>
+                        useChatStore.getState().setPreviewContent({ type: 'image', url: img.url, title: img.name })
+                      )
+                    }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                  <a
+                    href={img.url}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm rounded-[8px] p-1.5 hover:bg-black/80 opacity-0 group-hover/img:opacity-100 transition-opacity"
+                    title="Download"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  </a>
+                </div>
+              ))}
+              {unreferencedToolMedia.videos.map((vid, i) => (
+                <video key={`tm-vid-${i}`} src={vid.url} controls playsInline preload="none" className="max-w-full rounded-[10px] border border-white/10" />
+              ))}
+              {unreferencedToolMedia.pdfs.map((file, i) => (
+                <div key={`tm-pdf-${i}`} className="rounded-[10px] border border-white/10 overflow-hidden">
+                  <iframe src={file.url} loading="lazy" className="w-full h-[400px] bg-white" title={file.name} />
+                  <a
+                    href={file.url}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-2 px-3 py-2 bg-surface/80 border-t border-white/10 text-[12px] text-text-2 hover:text-text no-underline transition-colors"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    {file.name}
+                  </a>
+                </div>
+              ))}
+              {unreferencedToolMedia.files.map((file, i) => (
+                <a
+                  key={`tm-file-${i}`}
+                  href={file.url}
+                  download
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-2 px-3 py-2 rounded-[10px] border border-white/10 bg-surface/60 hover:bg-surface-2 transition-colors text-[13px] text-text-2 hover:text-text no-underline"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  {file.name}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="ml-auto opacity-50">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </a>
+              ))}
+            </div>
           )}
         </div>
       ) : null}
-
-      {/* Inline media from all tool outputs — images, videos, PDFs, files */}
-      {allToolMedia && (
-        <div className="max-w-[85%] md:max-w-[72%] flex flex-col gap-2 mt-1 mb-2">
-          {allToolMedia.images.map((img, i) => (
-            <div key={`tm-img-${i}`} className="relative group/img">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={img.url}
-                alt={img.name}
-                loading="lazy"
-                className="max-w-[400px] rounded-[10px] border border-white/10 cursor-pointer hover:border-white/25 transition-all"
-                onClick={() => {
-                  import('@/stores/use-chat-store').then(({ useChatStore }) =>
-                    useChatStore.getState().setPreviewContent({ type: 'image', url: img.url, title: img.name })
-                  )
-                }}
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-              />
-              <a
-                href={img.url}
-                download
-                onClick={(e) => e.stopPropagation()}
-                className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm rounded-[8px] p-1.5 hover:bg-black/80 opacity-0 group-hover/img:opacity-100 transition-opacity"
-                title="Download"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-              </a>
-            </div>
-          ))}
-          {allToolMedia.videos.map((vid, i) => (
-            <video key={`tm-vid-${i}`} src={vid.url} controls playsInline preload="none" className="max-w-full rounded-[10px] border border-white/10" />
-          ))}
-          {allToolMedia.pdfs.map((file, i) => (
-            <div key={`tm-pdf-${i}`} className="rounded-[10px] border border-white/10 overflow-hidden">
-              <iframe src={file.url} loading="lazy" className="w-full h-[400px] bg-white" title={file.name} />
-              <a
-                href={file.url}
-                download
-                onClick={(e) => e.stopPropagation()}
-                className="flex items-center gap-2 px-3 py-2 bg-surface/80 border-t border-white/10 text-[12px] text-text-2 hover:text-text no-underline transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                {file.name}
-              </a>
-            </div>
-          ))}
-          {allToolMedia.files.map((file, i) => (
-            <a
-              key={`tm-file-${i}`}
-              href={file.url}
-              download
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-2 px-3 py-2 rounded-[10px] border border-white/10 bg-surface/60 hover:bg-surface-2 transition-colors text-[13px] text-text-2 hover:text-text no-underline"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-              {file.name}
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="ml-auto opacity-50">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-            </a>
-          ))}
-        </div>
-      )}
 
       {/* Bookmark indicator */}
       {message.bookmarked && (

@@ -262,9 +262,6 @@ export function ChatroomMessageBubble({ message, agents, onToggleReaction, onRep
           />
         )}
 
-        {/* Attachments */}
-        {renderChatroomAttachments(message)}
-
         {/* Message text with markdown */}
         <div className={`text-[13px] text-text leading-[1.5] break-words chatroom-prose ${wide ? 'max-w-[92%]' : 'max-w-[85%]'}`}>
           <ReactMarkdown
@@ -362,6 +359,9 @@ export function ChatroomMessageBubble({ message, agents, onToggleReaction, onRep
             {processedText}
           </ReactMarkdown>
         </div>
+
+        {/* Attachments */}
+        {renderChatroomAttachments(message)}
 
         {/* Tool request banner for agent messages */}
         {!isUser && agent && (

@@ -6,6 +6,7 @@ import { resolvePrimaryAgentRoute } from '@/lib/server/agents/agent-runtime-conf
 import { clearMainLoopStateForSession } from '@/lib/server/agents/main-agent-loop'
 import { getSessionQueueSnapshot, getSessionRunState } from '@/lib/server/runtime/session-run-manager'
 import { normalizeCapabilitySelection } from '@/lib/capability-selection'
+import { enrichSessionWithMissionSummary } from '@/lib/server/missions/mission-service'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -18,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   session.queuedCount = queue.queueLength
   session.currentRunId = run.runningRunId || null
 
-  return NextResponse.json(session)
+  return NextResponse.json(enrichSessionWithMissionSummary(session))
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -134,7 +135,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!Array.isArray(session.messages)) session.messages = []
 
   upsertSession(id, session)
-  return NextResponse.json(session)
+  return NextResponse.json(enrichSessionWithMissionSummary(session as never))
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {

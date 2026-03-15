@@ -14,6 +14,7 @@ import {
   applyTaskPatch,
 } from '@/lib/server/tasks/task-service'
 import type { BoardTask } from '@/types'
+import { ensureMissionForTask, enrichTaskWithMissionSummary, noteMissionTaskFinished } from '@/lib/server/missions/mission-service'
 import '@/lib/server/builtin-plugins'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -24,7 +25,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params
   const tasks = loadTasks()
   if (!tasks[id]) return notFound()
-  return NextResponse.json(tasks[id])
+  return NextResponse.json(enrichTaskWithMissionSummary(tasks[id]))
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -71,6 +72,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   upsertTask(id, tasks[id])
+  const mission = ensureMissionForTask(tasks[id], { source: 'manual' })
+  if (tasks[id].status === 'completed' || tasks[id].status === 'failed' || tasks[id].status === 'cancelled') {
+    noteMissionTaskFinished(tasks[id], tasks[id].status, tasks[id].id)
+  }
   logActivity({ entityType: 'task', entityId: id, action: 'updated', actor: 'user', summary: `Task updated: "${tasks[id].title}" (${prevStatus} → ${tasks[id].status})` })
   if (prevStatus !== tasks[id].status) {
     pushMainLoopEventToMainSessions({
@@ -82,7 +87,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (prevStatus !== tasks[id].status && tasks[id].status === 'cancelled') {
     disableSessionHeartbeat(tasks[id].sessionId)
     notify('tasks')
-    return NextResponse.json(tasks[id])
+    return NextResponse.json(enrichTaskWithMissionSummary({
+      ...tasks[id],
+      missionId: mission?.id || tasks[id].missionId || null,
+    }))
   }
 
   // If task is manually transitioned to a terminal status, disable session heartbeat.
@@ -159,7 +167,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   notify('tasks')
-  return NextResponse.json(tasks[id])
+  return NextResponse.json(enrichTaskWithMissionSummary({
+    ...tasks[id],
+    missionId: mission?.id || tasks[id].missionId || null,
+  }))
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {

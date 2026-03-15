@@ -22,6 +22,23 @@ describe('chat-turn-tool-routing', () => {
     assert.match(String(response || ''), /not enabled/i)
   })
 
+  it('fails fast before model execution when delegation is disabled on the agent even if the delegate capability is enabled in the session', () => {
+    const response = resolveRequestedToolPreflightResponse({
+      message: 'Use delegate_to_codex_cli right now to say hello from a delegated worker.',
+      enabledPlugins: ['delegate', 'shell'],
+      toolPolicy: resolveSessionToolPolicy(['delegate', 'shell'], {}),
+      appSettings: {},
+      internal: false,
+      source: 'chat',
+      session: {
+        agentId: '9a4fefaf',
+      },
+    })
+
+    assert.match(String(response || ''), /couldn't use delegation/i)
+    assert.match(String(response || ''), /not enabled/i)
+  })
+
   it('returns a user-safe response when an explicitly requested delegation tool is policy-blocked', async () => {
     const events: SSEEvent[] = []
     const result = await runPostLlmToolRouting({
@@ -97,6 +114,51 @@ describe('chat-turn-tool-routing', () => {
     assert.match(result.fullResponse, /couldn't use delegation/i)
     assert.doesNotMatch(result.fullResponse, /Task completed via shell fallback/)
     assert.equal(result.missedRequestedTools.length, 0)
+  })
+
+  it('forces explicit delegation even when the user does not provide a task: payload', async () => {
+    const invocations: Array<{ toolName: string; args: Record<string, unknown> }> = []
+    const result = await runPostLlmToolRouting({
+      session: {
+        cwd: process.cwd(),
+        tools: ['delegate', 'shell'],
+      },
+      sessionId: 'session-delegate-freeform',
+      message: 'Use delegate_to_codex_cli right now to say hello from a delegated worker.',
+      effectiveMessage: 'Use delegate_to_codex_cli right now to say hello from a delegated worker.',
+      enabledPlugins: ['delegate', 'shell'],
+      toolPolicy: resolveSessionToolPolicy(['delegate', 'shell'], {}),
+      appSettings: {},
+      internal: false,
+      source: 'chat',
+      toolEvents: [
+        {
+          name: 'shell',
+          input: '{"command":"codex exec echo hello"}',
+          output: 'Hello from shell.',
+        },
+      ],
+      emit: () => {},
+    }, 'Hello from shell.', undefined, {
+      invokeTool: async (_ctx, toolName, args, _failurePrefix, calledNames) => {
+        invocations.push({ toolName, args })
+        calledNames.add(toolName)
+        return {
+          invoked: true,
+          responseOverride: 'Delegated cleanly.',
+          toolOutputText: JSON.stringify({ response: 'Delegated cleanly.' }),
+        }
+      },
+    })
+
+    assert.equal(invocations.length, 1)
+    assert.equal(invocations[0].toolName, 'delegate_to_codex_cli')
+    assert.deepEqual(invocations[0].args, {
+      task: 'Use delegate_to_codex_cli right now to say hello from a delegated worker.',
+    })
+    assert.equal(result.fullResponse, 'Delegated cleanly.')
+    assert.equal(result.missedRequestedTools.length, 0)
+    assert.equal(result.calledNames.has('delegate_to_codex_cli'), true)
   })
 
   it('uses classifier-backed memory store fallback without heuristic parsing', async () => {

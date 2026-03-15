@@ -225,17 +225,27 @@ export function resolveRequestedToolPreflightResponse(params: {
   appSettings: Record<string, unknown>
   internal: boolean
   source: string
+  session?: { agentId?: string | null } | null
 }): string | null {
   if (params.internal || params.source !== 'chat') return null
   const requestedToolNames = requestedToolNamesFromMessage(params.message)
   if (requestedToolNames.length === 0) return null
 
+  const agent = params.session?.agentId ? loadAgents()[params.session.agentId] : null
   const blockedResponses: string[] = []
   const unavailableResponses: string[] = []
   for (const toolName of requestedToolNames) {
     const blockedReason = resolveConcreteToolPolicyBlock(toolName, params.toolPolicy, params.appSettings)
     if (blockedReason) {
       blockedResponses.push(buildToolPolicyBlockResponse(toolName, blockedReason))
+      continue
+    }
+    if (
+      (toolName === 'delegate' || toolName.startsWith('delegate_to_'))
+      && agent
+      && agent.delegationEnabled !== true
+    ) {
+      unavailableResponses.push(buildToolUnavailableResponse(toolName, 'delegation is not enabled for this agent right now'))
       continue
     }
     if (!pluginIdMatches(params.enabledPlugins, toolName)) {
@@ -393,7 +403,7 @@ export async function runPostLlmToolRouting(
   for (const toolName of FORCED_DELEGATION_TOOLS) {
     if (!requestedToolNames.includes(toolName)) continue
     if (calledNames.has(toolName)) continue
-    const task = extractDelegationTask(ctx.message, toolName)
+    const task = extractDelegationTask(ctx.message, toolName) || ctx.effectiveMessage.trim()
     if (!task) continue
     const result = await invokeTool(ctx, toolName, { task }, `Forced ${toolName} invocation failed`, calledNames)
     if (result.blockedReason) policyBlockedTools.set(toolName, result.blockedReason)

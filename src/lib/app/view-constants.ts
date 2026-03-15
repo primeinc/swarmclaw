@@ -7,6 +7,7 @@ export const VIEW_LABELS: Record<AppView, string> = {
   chatrooms: 'Chatrooms',
   schedules: 'Schedules',
   memory: 'Memory',
+  missions: 'Missions',
   tasks: 'Tasks',
   secrets: 'Secrets',
   providers: 'Providers',
@@ -48,6 +49,7 @@ export const VIEW_DESCRIPTIONS: Record<AppView, string> = {
   chatrooms: 'Multi-agent collaborative chatrooms',
   schedules: 'Automated task schedules',
   memory: 'Long-term agent memory store',
+  missions: 'Durable mission control and execution state',
   tasks: 'Task board for agent work and queued runs',
   secrets: 'API keys, tokens, and encrypted credentials',
   providers: 'LLM providers & custom endpoints',
@@ -85,6 +87,12 @@ export const VIEW_EMPTY_STATES: Record<Exclude<AppView, 'agents' | 'home'>, { ic
     title: 'Memory',
     description: 'Long-term memory store for AI agents so they can retain useful context across conversations.',
     features: ['Agents store findings and learnings automatically', 'Full-text search across all stored memories', 'Organized by categories and agents', 'Persists across conversations for continuity'],
+  },
+  missions: {
+    icon: 'target',
+    title: 'Missions',
+    description: 'Track durable objectives, blockers, waits, verification, and linked work across chats, schedules, and delegation.',
+    features: ['Inspect active and waiting missions', 'Review child missions and linked tasks', 'Understand why a mission is blocked or complete', 'Resume, replan, or retry verification from one place'],
   },
   tasks: {
     icon: 'clipboard',
@@ -197,7 +205,7 @@ export const VIEW_EMPTY_STATES: Record<Exclude<AppView, 'agents' | 'home'>, { ic
 }
 
 export const FULL_WIDTH_VIEWS = new Set<AppView>([
-  'home', 'inbox', 'chatrooms', 'schedules', 'secrets', 'providers', 'skills',
+  'home', 'inbox', 'chatrooms', 'schedules', 'missions', 'secrets', 'providers', 'skills',
   'connectors', 'webhooks', 'mcp_servers', 'knowledge', 'extensions',
   'usage', 'wallets', 'runs', 'autonomy', 'logs', 'settings', 'activity', 'projects',
 ])

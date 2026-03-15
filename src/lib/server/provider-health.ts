@@ -56,6 +56,15 @@ export function markProviderSuccess(providerId: string): void {
     lastSuccessAt: now,
     cooldownUntil: undefined,
   })
+  queueMicrotask(() => {
+    import('@/lib/server/missions/mission-service')
+      .then(({ requestMissionTicksForProviderRecovery }) => {
+        requestMissionTicksForProviderRecovery(providerId)
+      })
+      .catch(() => {
+        // Mission recovery is best-effort only.
+      })
+  })
 }
 
 export function isProviderCoolingDown(providerId: string): boolean {

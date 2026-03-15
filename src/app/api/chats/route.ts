@@ -13,6 +13,7 @@ import { buildAgentDisabledMessage, isAgentDisabled } from '@/lib/server/agents/
 import { materializeStreamingAssistantArtifacts } from '@/lib/chat/chat-streaming-state'
 import { buildSessionListSummary } from '@/lib/chat/session-summary'
 import { normalizeCapabilitySelection } from '@/lib/capability-selection'
+import { enrichSessionWithMissionSummary } from '@/lib/server/missions/mission-service'
 export const dynamic = 'force-dynamic'
 
 async function ensureDaemonIfNeeded(source: string) {
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
   }
 
   const summarized = Object.fromEntries(
-    Object.entries(sessions).map(([id, session]) => [id, buildSessionListSummary(session)]),
+    Object.entries(sessions).map(([id, session]) => [id, buildSessionListSummary(enrichSessionWithMissionSummary(session))]),
   )
 
   const { searchParams } = new URL(req.url)
