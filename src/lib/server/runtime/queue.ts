@@ -44,8 +44,12 @@ import { noteMissionTaskFinished, noteMissionTaskStarted } from '@/lib/server/mi
 export const collectTaskConnectorFollowupTargets = collectTaskConnectorFollowupTargetsImpl
 export const resolveTaskOriginConnectorFollowupTarget = resolveTaskOriginConnectorFollowupTargetImpl
 
-// HMR-safe: pin processing flag to globalThis so hot reloads don't reset it
-const _queueState = hmrSingleton('__swarmclaw_queue__', () => ({ processing: false, pendingKick: false }))
+// HMR-safe: pin processing state to globalThis so hot reloads don't reset it
+const _queueState = hmrSingleton('__swarmclaw_queue__', () => ({
+  activeCount: 0,
+  maxConcurrent: 3,
+  pendingKick: false,
+}))
 
 const DISABLED_AGENT_RETRY_MS = 60_000
 
@@ -960,8 +964,8 @@ export function enqueueTask(taskId: string) {
     text: `Task queued: "${task.title}" (${task.id})`,
   })
 
-  // If processNext is already running, mark a pending kick so it re-enters after finishing
-  if (_queueState.processing) {
+  // If processNext is at capacity, mark a pending kick so it picks up work when a slot frees
+  if (_queueState.activeCount >= _queueState.maxConcurrent) {
     _queueState.pendingKick = true
   }
   // Delay before kicking worker so UI shows the queued state
@@ -1152,13 +1156,22 @@ export function dequeueNextRunnableTask(queue: string[], tasks: Record<string, B
 }
 
 export async function processNext() {
-  if (_queueState.processing) return
-  _queueState.processing = true
+  const settings = loadSettings()
+  _queueState.maxConcurrent = normalizeInt(
+    (settings as Record<string, unknown>).taskQueueConcurrency, 3, 1, 10
+  )
+
+  if (_queueState.activeCount >= _queueState.maxConcurrent) {
+    _queueState.pendingKick = true
+    return
+  }
+  _queueState.activeCount++
   const endQueuePerf = perf.start('queue', 'processNext')
 
   try {
     // Recover orphaned tasks: status is 'queued' but missing from the queue array
-    {
+    // Only run from the first worker to avoid redundant scans
+    if (_queueState.activeCount === 1) {
       const allTasks = loadTasks()
       const currentQueue = loadQueue()
       const queueSet = new Set(currentQueue)
@@ -1173,19 +1186,20 @@ export async function processNext() {
       if (recovered) saveQueue(currentQueue)
     }
 
-    while (true) {
+    // Process ONE task per invocation (no while loop)
+    {
       const tasks = loadTasks()
       const queue = loadQueue()
-      if (queue.length === 0) break
+      if (queue.length === 0) return
 
       const taskId = dequeueNextRunnableTask(queue, tasks as Record<string, BoardTask>)
       saveQueue(queue)
-      if (!taskId) break
+      if (!taskId) return
       const latestTasks = loadTasks() as Record<string, BoardTask>
       let task = latestTasks[taskId] as BoardTask | undefined
 
       if (!task || task.status !== 'queued') {
-        continue
+        return
       }
 
       // Dependency guard: skip tasks whose blockers are not all completed
@@ -1200,7 +1214,7 @@ export async function processNext() {
           pushQueueUnique(queue, taskId)
           saveQueue(queue)
           console.log(`[queue] Skipping task "${task.title}" (${taskId}) — blocked by incomplete dependencies`)
-          continue
+          return
         }
       }
 
@@ -1216,7 +1230,7 @@ export async function processNext() {
           type: 'task_failed',
           text: `Task failed: "${task.title}" (${task.id}) — agent not found.`,
         })
-        continue
+        return
       }
       if (isAgentDisabled(agent)) {
         const now = Date.now()
@@ -1231,13 +1245,13 @@ export async function processNext() {
           type: 'task_deferred',
           text: `Task deferred: "${task.title}" (${task.id}) — agent ${task.agentId} is disabled.`,
         })
-        continue
+        return
       }
 
       const beforeStartTasks = loadTasks() as Record<string, BoardTask>
       task = beforeStartTasks[taskId] as BoardTask | undefined
       if (!task || task.status !== 'queued') {
-        continue
+        return
       }
 
       // Mark as running
@@ -1392,7 +1406,7 @@ export async function processNext() {
             sourceMessage: task.description || task.title,
           })
           console.warn(`[queue] Task "${task.title}" cancelled during execution`)
-          continue
+          return
         }
         if (t2[taskId]) {
           applyTaskPolicyDefaults(t2[taskId])
@@ -1581,7 +1595,7 @@ export async function processNext() {
             sourceMessage: task.description || task.title,
           })
           console.warn(`[queue] Task "${task.title}" aborted because it was cancelled`)
-          continue
+          return
         }
         if (t2[taskId]) {
           applyTaskPolicyDefaults(t2[taskId])
@@ -1681,12 +1695,13 @@ export async function processNext() {
       }
     }
   } finally {
+    _queueState.activeCount--
     endQueuePerf()
-    _queueState.processing = false
-    // If tasks were enqueued while we were processing, kick another round
-    if (_queueState.pendingKick) {
+    // Kick next worker if more work is available or was requested
+    const remainingQueue = loadQueue()
+    if (remainingQueue.length > 0 || _queueState.pendingKick) {
       _queueState.pendingKick = false
-      setTimeout(() => processNext(), 500)
+      queueMicrotask(() => processNext())
     }
   }
 }
