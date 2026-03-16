@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-03-15T22:29:20.266Z",
-  "totalIssues": 428,
+  "generatedAt": "2026-03-16T01:23:43.690Z",
+  "totalIssues": 429,
   "uniqueIssues": 149,
   "issues": [
     {
@@ -800,7 +800,7 @@
       "ruleId": "@typescript-eslint/no-explicit-any",
       "severity": 2,
       "message": "Unexpected any. Specify a different type.",
-      "count": 17
+      "count": 18
     },
     {
       "filePath": "src/lib/server/runtime/process-manager.ts",
