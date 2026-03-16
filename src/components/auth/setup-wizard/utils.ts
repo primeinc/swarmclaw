@@ -162,6 +162,8 @@ export function buildStarterDrafts(args: {
       delegationTargetMode: previous?.delegationTargetMode || 'all',
       delegationTargetAgentIds: previous?.delegationTargetAgentIds || [],
       autoDraftSkillSuggestions: previous?.autoDraftSkillSuggestions ?? true,
+      orchestratorEnabled: previous?.orchestratorEnabled ?? false,
+      orchestratorMission: previous?.orchestratorMission || '',
       avatarSeed: previous?.avatarSeed || crypto.randomUUID().slice(0, 8),
       avatarUrl: previous?.avatarUrl || null,
       enabled: previous?.enabled ?? true,

@@ -14,6 +14,7 @@ import type { ProviderType, ClaudeSkill, AgentWallet, AgentPackManifest, AgentRo
 import { WalletSection } from '@/components/wallets/wallet-section'
 import { AVAILABLE_TOOLS, PLATFORM_TOOLS } from '@/lib/tool-definitions'
 import { NATIVE_CAPABILITY_PROVIDER_IDS, NON_LANGGRAPH_PROVIDER_IDS } from '@/lib/provider-sets'
+import { isOrchestratorProviderEligible } from '@/lib/orchestrator-config'
 import { AgentAvatar } from './agent-avatar'
 import { AgentPickerList } from '@/components/shared/agent-picker-list'
 import { randomSoul } from '@/lib/soul-suggestions'
@@ -239,6 +240,11 @@ export function AgentSheet() {
   const [heartbeatIntervalSec, setHeartbeatIntervalSec] = useState('')  // '' = default (30m)
   const [heartbeatModel, setHeartbeatModel] = useState('')
   const [heartbeatPrompt, setHeartbeatPrompt] = useState('')
+  const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
+  const [orchestratorMission, setOrchestratorMission] = useState('')
+  const [orchestratorWakeInterval, setOrchestratorWakeInterval] = useState('5m')
+  const [orchestratorGovernance, setOrchestratorGovernance] = useState<'autonomous' | 'approval-required' | 'notify-only'>('autonomous')
+  const [orchestratorMaxCyclesPerDay, setOrchestratorMaxCyclesPerDay] = useState<string>('')
   const [sessionResetMode, setSessionResetMode] = useState<'' | 'idle' | 'daily' | 'isolated'>('')
   const [sessionIdleTimeoutSec, setSessionIdleTimeoutSec] = useState('')
   const [sessionMaxAgeSec, setSessionMaxAgeSec] = useState('')
@@ -440,6 +446,11 @@ export function AgentSheet() {
         setHeartbeatIntervalSec(parseDurationToSec(editing.heartbeatInterval, editing.heartbeatIntervalSec))
         setHeartbeatModel(editing.heartbeatModel || '')
         setHeartbeatPrompt(editing.heartbeatPrompt || '')
+        setOrchestratorEnabled(editing.orchestratorEnabled || false)
+        setOrchestratorMission(editing.orchestratorMission || '')
+        setOrchestratorWakeInterval(typeof editing.orchestratorWakeInterval === 'string' ? editing.orchestratorWakeInterval : typeof editing.orchestratorWakeInterval === 'number' ? `${editing.orchestratorWakeInterval}s` : '5m')
+        setOrchestratorGovernance(editing.orchestratorGovernance || 'autonomous')
+        setOrchestratorMaxCyclesPerDay(editing.orchestratorMaxCyclesPerDay != null ? String(editing.orchestratorMaxCyclesPerDay) : '')
         setSessionResetMode(editing.sessionResetMode || '')
         setSessionIdleTimeoutSec(editing.sessionIdleTimeoutSec != null ? String(editing.sessionIdleTimeoutSec) : '')
         setSessionMaxAgeSec(editing.sessionMaxAgeSec != null ? String(editing.sessionMaxAgeSec) : '')
@@ -505,6 +516,11 @@ export function AgentSheet() {
         setHeartbeatIntervalSec('')
         setHeartbeatModel('')
         setHeartbeatPrompt('')
+        setOrchestratorEnabled(false)
+        setOrchestratorMission('')
+        setOrchestratorWakeInterval('5m')
+        setOrchestratorGovernance('autonomous')
+        setOrchestratorMaxCyclesPerDay('')
         setSessionResetMode('')
         setSessionIdleTimeoutSec('')
         setSessionMaxAgeSec('')
@@ -704,6 +720,11 @@ export function AgentSheet() {
       heartbeatIntervalSec: heartbeatIntervalSec ? Number(heartbeatIntervalSec) : null,
       heartbeatModel: heartbeatModel.trim() || null,
       heartbeatPrompt: heartbeatPrompt.trim() || null,
+      orchestratorEnabled,
+      orchestratorMission: orchestratorMission.trim() || undefined,
+      orchestratorWakeInterval: orchestratorWakeInterval.trim() || null,
+      orchestratorGovernance,
+      orchestratorMaxCyclesPerDay: orchestratorMaxCyclesPerDay ? Number(orchestratorMaxCyclesPerDay) : null,
       identityState,
       sessionResetMode: sessionResetMode || null,
       sessionIdleTimeoutSec: Number.isFinite(parsedSessionIdleTimeoutSec) && parsedSessionIdleTimeoutSec! >= 0 ? parsedSessionIdleTimeoutSec : null,
@@ -898,6 +919,7 @@ export function AgentSheet() {
     if (skills.length > 0 || skillIds.length > 0 || mcpServerIds.length > 0 || mcpDisabledTools.length > 0) badges.push('Skills & MCP')
     if (toolsDifferFromDefault || filesystemScope === 'machine' || delegationEnabled || delegationTargetMode === 'selected' || delegationTargetAgentIds.length > 0) badges.push('Tools')
     if (budgetEnabled) badges.push('Budget')
+    if (orchestratorEnabled) badges.push('Orchestrator')
     if (disabled) badges.push('Disabled')
     if (autoRecovery) badges.push('Recovery')
     if (projectId) badges.push('Project')
@@ -919,6 +941,7 @@ export function AgentSheet() {
     mcpServerIds.length,
     memoryScopeMode,
     memoryTierPreference,
+    orchestratorEnabled,
     proactiveMemory,
     projectId,
     routingStrategy,
@@ -1630,6 +1653,93 @@ export function AgentSheet() {
           </button>
         </div>
       </SectionCard>
+
+      {isOrchestratorProviderEligible(provider) && (
+      <SectionCard
+        title="Orchestrator"
+        description="Turn this agent into a self-directing orchestrator that wakes on a schedule and manages the platform."
+      >
+        <div className="flex items-center justify-between gap-4 rounded-[14px] border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+          <div className="min-w-0">
+            <p className="text-[14px] font-600 text-text">Orchestrator Mode</p>
+            <p className="mt-1 text-[12px] leading-[1.6] text-text-3/75">
+              Enable autonomous platform management — wakes on a schedule, reviews state, and delegates work.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOrchestratorEnabled((current) => !current)}
+            className={`relative h-6 w-11 shrink-0 rounded-full border-none transition-colors duration-200 ${orchestratorEnabled ? 'bg-accent-bright' : 'bg-white/[0.12]'}`}
+            aria-pressed={orchestratorEnabled}
+          >
+            <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform duration-200 ${orchestratorEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
+
+        {orchestratorEnabled && (
+          <div className="mt-4 space-y-4">
+            <div>
+              <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                Mission
+              </label>
+              <textarea
+                value={orchestratorMission}
+                onChange={(e) => setOrchestratorMission(e.target.value)}
+                placeholder="Describe the orchestrator's mission — what should it manage, optimize, or oversee?"
+                rows={3}
+                className={`${inputClass} resize-y min-h-[84px]`}
+                style={{ fontFamily: 'inherit' }}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                  Wake Interval
+                </label>
+                <input
+                  type="text"
+                  value={orchestratorWakeInterval}
+                  onChange={(e) => setOrchestratorWakeInterval(e.target.value)}
+                  placeholder="5m"
+                  className={inputClass}
+                  style={{ fontFamily: 'inherit' }}
+                />
+              </div>
+              <div>
+                <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                  Governance
+                </label>
+                <select
+                  value={orchestratorGovernance}
+                  onChange={(e) => setOrchestratorGovernance(e.target.value as typeof orchestratorGovernance)}
+                  className={inputClass}
+                  style={{ fontFamily: 'inherit' }}
+                >
+                  <option value="autonomous">Autonomous</option>
+                  <option value="approval-required">Approval Required</option>
+                  <option value="notify-only">Notify Only</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                  Max Cycles/Day
+                </label>
+                <input
+                  type="number"
+                  value={orchestratorMaxCyclesPerDay}
+                  onChange={(e) => setOrchestratorMaxCyclesPerDay(e.target.value)}
+                  placeholder="No limit"
+                  min={1}
+                  className={inputClass}
+                  style={{ fontFamily: 'inherit' }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </SectionCard>
+      )}
 
       <AdvancedSettingsSection
         open={showAdvancedSettings}

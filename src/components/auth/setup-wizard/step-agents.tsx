@@ -10,6 +10,7 @@ import type { ProviderModelDiscoveryResult } from '@/types'
 import { StepShell, SkipLink } from './shared'
 import { AVAILABLE_TOOLS, PLATFORM_TOOLS } from '@/lib/tool-definitions'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { isOrchestratorProviderEligible } from '@/lib/orchestrator-config'
 
 /* ── Model combobox: search discovered models or type a custom one ── */
 
@@ -478,6 +479,40 @@ export function StepAgents({
                       </div>
                     </div>
                   </div>
+                  {matchedProvider && isOrchestratorProviderEligible(matchedProvider.provider) && (
+                    <div className="md:col-span-2">
+                      <div className="flex items-center justify-between rounded-[12px] border border-white/[0.08] bg-bg px-4 py-3">
+                        <div>
+                          <div className="text-[12px] font-600 text-text">Enable Orchestrator</div>
+                          <div className="mt-1 text-[11px] text-text-3">
+                            Allow this agent to autonomously manage the platform
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onUpdateDraft(draft.id, { orchestratorEnabled: !draft.orchestratorEnabled })}
+                          className={`w-9 h-5 rounded-full transition-all relative cursor-pointer shrink-0 ${draft.orchestratorEnabled ? 'bg-accent-bright' : 'bg-white/[0.08]'}`}
+                          aria-pressed={draft.orchestratorEnabled}
+                        >
+                          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${draft.orchestratorEnabled ? 'left-[18px]' : 'left-0.5'}`} />
+                        </button>
+                      </div>
+                      {draft.orchestratorEnabled && (
+                        <div className="mt-2">
+                          <label className="block text-[12px] text-text-3 font-500 mb-1.5 ml-1">Mission (optional)</label>
+                          <textarea
+                            value={draft.orchestratorMission}
+                            onChange={(e) => onUpdateDraft(draft.id, { orchestratorMission: e.target.value })}
+                            rows={2}
+                            placeholder="e.g. Monitor system health and restart failing services"
+                            className="w-full px-4 py-3 rounded-[12px] border border-white/[0.08] bg-bg
+                              text-text text-[14px] outline-none transition-all duration-200 resize-none
+                              focus:border-accent-bright/30 focus:shadow-[0_0_30px_rgba(99,102,241,0.1)]"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <details className="mt-4 rounded-[12px] border border-white/[0.08] bg-bg px-4 py-3">

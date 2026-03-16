@@ -37,4 +37,24 @@ describe('AgentCreateSchema', () => {
     assert.equal(parsed.delegationTargetMode, 'selected')
     assert.deepEqual(parsed.delegationTargetAgentIds, ['agent-a', 'agent-b'])
   })
+
+  it('accepts orchestrator config and isolated session reset mode for eligible providers', () => {
+    const parsed = AgentCreateSchema.parse({
+      name: 'Operator',
+      provider: 'openai',
+      orchestratorEnabled: true,
+      orchestratorMission: ' Keep the platform healthy ',
+      orchestratorWakeInterval: '5m',
+      orchestratorGovernance: 'notify-only',
+      orchestratorMaxCyclesPerDay: 12,
+      sessionResetMode: 'isolated',
+    })
+
+    assert.equal(parsed.orchestratorEnabled, true)
+    assert.equal(parsed.orchestratorMission, ' Keep the platform healthy ')
+    assert.equal(parsed.orchestratorWakeInterval, '5m')
+    assert.equal(parsed.orchestratorGovernance, 'notify-only')
+    assert.equal(parsed.orchestratorMaxCyclesPerDay, 12)
+    assert.equal(parsed.sessionResetMode, 'isolated')
+  })
 })

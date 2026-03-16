@@ -8,7 +8,7 @@
   <img src="https://raw.githubusercontent.com/swarmclawai/swarmclaw/main/public/branding/swarmclaw-org-avatar.png" alt="SwarmClaw lobster logo" width="120" />
 </p>
 
-SwarmClaw is a self-hosted AI runtime for OpenClaw and multi-agent work. It helps you run autonomous agents with heartbeats, schedules, delegation, memory, runtime skills, and reviewed conversation-to-skill learning across OpenClaw gateways and other providers.
+SwarmClaw is a self-hosted AI runtime for OpenClaw and multi-agent work. It helps you run autonomous agents and orchestrators with heartbeats, schedules, delegation, memory, runtime skills, and reviewed conversation-to-skill learning across OpenClaw gateways and other providers.
 
 GitHub: https://github.com/swarmclawai/swarmclaw  
 Docs: https://swarmclaw.ai/docs  
@@ -177,6 +177,19 @@ The building blocks are the same: **agents, tools, memory, delegation, schedules
 
 ## Release Notes
 
+### v1.1.4 Highlights
+
+- **Orchestrator agents return as a first-class autonomy mode**: eligible agents can now run scheduled orchestrator wake cycles with their own mission, governance policy, wake interval, cycle cap, Autonomy-desk controls, and setup/editor support.
+- **Runtime durability is much harder to knock over**: the task queue now supports parallel execution with restart-safe swarm state, orphaned running-task recovery, stuck-task idle timeout detection, and provider-health persistence across daemon restarts.
+- **Recovery and safety paths are tighter**: provider errors are classified for smarter failover, unavailable agents defer work instead of burning it, supervisor blocks can create executable notifications, and agent budget limits now gate task execution before work starts.
+- **Temporary session rooms are easier to inspect**: chatrooms now split persistent rooms from temporary session-style rooms so orchestrator or structured-session conversations can stay visible without polluting the normal room list.
+
+### v1.1.3 Highlights
+
+- **Release integrity repair**: `build:ci` no longer trips over the langgraph checkpoint duplicate-column path, which restores clean build validation for the release line.
+- **Storage writes are safer**: credential and agent saves were tightened to upsert-only behavior and bulk-delete safety guards so tests or scripts cannot accidentally wipe live state.
+- **Plugin-to-extension cleanup finished**: remaining rename residue in scripts and tests was cleaned up so packaging and release tooling stay aligned with the current extensions model.
+
 ### v1.1.2 Highlights
 
 - **Structured Sessions expanded into richer orchestration**: ProtocolRun-based sessions now support dependency-aware step graphs, reusable step outputs, and a broader advanced execution model on the same durable runtime instead of bringing back a separate orchestrator.
@@ -207,9 +220,9 @@ The building blocks are the same: **agents, tools, memory, delegation, schedules
 
 ## What SwarmClaw Focuses On
 
-- **Delegation and background execution**: delegated work, subagents, durable jobs, checkpointing, and background task execution.
+- **Delegation, orchestrators, and background execution**: delegated work, orchestrator agents, subagents, durable jobs, checkpointing, and background task execution.
 - **Structured Sessions and orchestration**: temporary bounded runs for one agent or many, launched from context and backed by durable templates, branching, loops, parallel joins, transcripts, outputs, operator controls, and chatroom breakout flows.
-- **Autonomy and memory**: heartbeats, schedules, long-running execution, durable memory, reflection memory, human-context learning, document recall, and project-aware context.
+- **Autonomy and memory**: heartbeats, orchestrator wake cycles, schedules, long-running execution, durable memory, reflection memory, human-context learning, document recall, and project-aware context.
 - **OpenClaw integration**: named gateway profiles, external runtimes, deploy helpers, config sync, approval handling, and OpenClaw agent file editing.
 - **Runtime skills**: pinned skills, OpenClaw-compatible `SKILL.md` import, on-demand skill execution, and configurable keyword or embedding-based recommendation.
 - **Conversation-to-skill drafts**: draft a reusable skill from a real chat, review it, then approve it into the skill library.

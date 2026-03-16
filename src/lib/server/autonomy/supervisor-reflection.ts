@@ -28,6 +28,7 @@ import {
   type AutonomyRuntimeScope,
   type NormalizedSupervisorSettings,
 } from '@/lib/autonomy/supervisor-settings'
+import { notifyOrchestrators } from '@/lib/server/runtime/orchestrator-events'
 
 const MAIN_LOOP_META_LINE_RE = /\[(?:MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]\s*(\{[^\n]*\})?/i
 const DEFAULT_TRANSCRIPT_MESSAGES = 12
@@ -893,6 +894,9 @@ function persistIncidents(incidents: Array<Omit<SupervisorIncident, 'id' | 'crea
     created.push(next)
   }
   saveSupervisorIncidents(store)
+  for (const incident of created) {
+    notifyOrchestrators(`Incident [${incident.severity}]: ${(incident.summary || '').slice(0, 100)}`, `incident:${incident.id || incident.kind}`)
+  }
   return created
 }
 

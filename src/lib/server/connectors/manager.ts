@@ -27,6 +27,7 @@ import { evaluateRoutingRules } from '@/lib/server/chatrooms/chatroom-routing'
 import { markProviderFailure, markProviderSuccess } from '../provider-health'
 import { syncSessionArchiveMemory } from '@/lib/server/memory/session-archive-memory'
 import { buildIdentityContinuityContext } from '../identity-continuity'
+import { notifyOrchestrators } from '@/lib/server/runtime/orchestrator-events'
 import { ensureAgentThreadSession } from '@/lib/server/agents/agent-thread-session'
 import { buildRuntimeSkillPromptBlocks, resolveRuntimeSkills } from '@/lib/server/skills/runtime-skill-resolver'
 import { getProvider } from '@/lib/providers'
@@ -2384,6 +2385,7 @@ async function _startConnectorImpl(connectorId: string): Promise<void> {
     saveConnectors(connectors)
     notify('connectors')
     recordHealthEvent(connectorId, 'error', errMsg)
+    notifyOrchestrators(`Connector ${connector.name || connectorId} status: error`, `connector-status:${connectorId}`)
     throw err
   }
 }
@@ -2918,6 +2920,7 @@ export async function checkConnectorHealth(): Promise<void> {
     // Connector is dead but still in the running Map
     console.warn(`[connector-health] Connector "${instance.connector.name}" (${id}) isAlive=false — removing from running`)
     recordHealthEvent(id, 'disconnected', `Connector "${instance.connector.name}" detected as dead (isAlive=false)`)
+    notifyOrchestrators(`Connector ${instance.connector.name || id} status: disconnected`, `connector-status:${id}`)
 
     // Clean up the dead instance
     try { await instance.stop() } catch { /* ignore */ }

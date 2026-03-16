@@ -23,6 +23,9 @@ async function executeChatroomAction(args: Record<string, unknown>, context: { a
   const message = (normalized.message ?? normalized.text) as string | undefined
   const chatMode = (normalized.chatMode ?? normalized.chat_mode) as string | undefined
   const autoAddress = (normalized.autoAddress ?? normalized.auto_address) as boolean | undefined
+  const temporary = (normalized.temporary) as boolean | undefined
+  const topic = (normalized.topic) as string | undefined
+  const triggerResponses = (normalized.triggerResponses ?? normalized.trigger_responses) as boolean | undefined
   try {
     const chatrooms = loadChatrooms() as Record<string, Chatroom>
 
@@ -51,6 +54,8 @@ async function executeChatroomAction(args: Record<string, unknown>, context: { a
         messages: [],
         chatMode: chatMode === 'parallel' ? 'parallel' : 'sequential',
         autoAddress: Boolean(autoAddress),
+        temporary: !!temporary,
+        topic: topic || undefined,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       }
@@ -93,6 +98,20 @@ async function executeChatroomAction(args: Record<string, unknown>, context: { a
       chatroom.updatedAt = Date.now()
       saveChatrooms(chatrooms)
       notify(`chatroom:${chatroomId}`)
+
+      // Trigger other agents to respond via the chatroom chat API
+      if (triggerResponses !== false) {
+        try {
+          const port = process.env.PORT || '3456'
+          const key = process.env.ACCESS_KEY || ''
+          await fetch(`http://127.0.0.1:${port}/api/chatrooms/${chatroomId}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Access-Key': key },
+            body: JSON.stringify({ text: message, senderId: context.agentId || 'agent' }),
+          })
+        } catch { /* best-effort */ }
+      }
+
       return JSON.stringify({ ok: true, messageId: msgId })
     }
 
@@ -122,7 +141,11 @@ const ChatroomExtension: Extension = {
           chatroomId: { type: 'string' },
           name: { type: 'string' },
           agentId: { type: 'string' },
-          message: { type: 'string' }
+          agentIds: { type: 'array', items: { type: 'string' }, description: 'Agent IDs to add as members when creating a chatroom' },
+          message: { type: 'string' },
+          temporary: { type: 'boolean', description: 'If true, marks the chatroom as a temporary orchestrator session' },
+          topic: { type: 'string', description: 'Topic or objective for the chatroom' },
+          triggerResponses: { type: 'boolean', description: 'If true (default), sending a message triggers other agents to respond' }
         },
         required: ['action']
       },

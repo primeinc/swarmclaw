@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/app/api-client'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { StatCard } from '@/components/ui/stat-card'
+import { isOrchestratorEligible } from '@/lib/orchestrator-config'
 import { timeAgo } from '@/lib/time-format'
-import type { ApprovalRequest, EstopState, Mission, SupervisorIncident } from '@/types'
+import { useWs } from '@/hooks/use-ws'
+import type { Agent, ApprovalRequest, EstopState, Mission, SupervisorIncident } from '@/types'
 
 type EstopResponse = EstopState & {
   ok?: boolean
@@ -107,11 +109,12 @@ export default function AutonomyPage() {
   const [estop, setEstop] = useState<EstopResponse | null>(null)
   const [incidents, setIncidents] = useState<SupervisorIncident[]>([])
   const [missions, setMissions] = useState<Mission[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
-  const [pendingAction, setPendingAction] = useState<'autonomy' | 'all' | 'resume' | 'refresh' | 'policy' | 'approve' | 'reject' | null>(null)
+  const [pendingAction, setPendingAction] = useState<'autonomy' | 'all' | 'resume' | 'refresh' | 'policy' | 'approve' | 'reject' | 'orchestrator-toggle' | null>(null)
   const [incidentFilter, setIncidentFilter] = useState<IncidentFilter>('all')
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null)
 
@@ -119,14 +122,16 @@ export default function AutonomyPage() {
     if (mode === 'initial') setLoading(true)
     else setRefreshing(true)
     try {
-      const [estopState, incidentList, missionList] = await Promise.all([
+      const [estopState, incidentList, missionList, agentMap] = await Promise.all([
         api<EstopResponse>('GET', '/autonomy/estop'),
         api<SupervisorIncident[]>('GET', '/autonomy/incidents?limit=60'),
         api<Mission[]>('GET', '/missions?status=non_terminal&limit=20'),
+        api<Record<string, Agent>>('GET', '/agents'),
       ])
       setEstop(estopState)
       setIncidents(Array.isArray(incidentList) ? incidentList : [])
       setMissions(Array.isArray(missionList) ? missionList : [])
+      setAgents(agentMap ? Object.values(agentMap) : [])
       setRefreshedAt(Date.now())
       setError(null)
     } catch (err) {
@@ -255,6 +260,29 @@ export default function AutonomyPage() {
     }
   }, [load])
 
+  const loadAgents = useCallback(async () => {
+    try {
+      const agentMap = await api<Record<string, Agent>>('GET', '/agents')
+      setAgents(agentMap ? Object.values(agentMap) : [])
+    } catch { /* swallow — load() will surface errors */ }
+  }, [])
+  useWs('agents', loadAgents, 30_000)
+
+  async function toggleOrchestrator(agent: Agent) {
+    setPendingAction('orchestrator-toggle')
+    try {
+      const next = !agent.orchestratorEnabled
+      await api('PUT', `/agents/${agent.id}`, { orchestratorEnabled: next })
+      setActionMessage(`${agent.name} orchestrator ${next ? 'enabled' : 'disabled'}.`)
+      setError(null)
+      await loadAgents()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to toggle orchestrator.')
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
   const sortedIncidents = useMemo(
     () => [...incidents].sort((left, right) => right.createdAt - left.createdAt),
     [incidents],
@@ -272,6 +300,11 @@ export default function AutonomyPage() {
     if (incidentFilter === 'runtime_failure') return sortedIncidents.filter((incident) => incident.kind === 'runtime_failure')
     return sortedIncidents
   }, [incidentFilter, sortedIncidents])
+
+  const orchestrators = useMemo(
+    () => agents.filter((a) => a.orchestratorEnabled && !a.trashedAt && isOrchestratorEligible(a)),
+    [agents],
+  )
 
   const latestIncident = sortedIncidents[0] || null
   const highSeverityCount = sortedIncidents.filter((incident) => incident.severity === 'high').length
@@ -494,6 +527,106 @@ export default function AutonomyPage() {
                     <div className="text-[14px] font-600 text-text">{mission.objective}</div>
                     <div className="mt-2 text-[12px] leading-[1.7] text-text-3/72">
                       {mission.waitState?.reason || mission.currentStep || mission.verifierSummary || mission.plannerSummary || 'Mission active.'}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-[20px] border border-white/[0.06] bg-surface p-5">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <h2 className="font-display text-[18px] font-700 tracking-[-0.02em] text-text">Orchestrators</h2>
+              <p className="mt-1 text-[12px] leading-[1.7] text-text-3/72">
+                Agents running in orchestrator mode with autonomous wake cycles. Toggle individual orchestrators on or off without leaving the safety desk.
+              </p>
+            </div>
+            <div className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] text-text-3/72">
+              {orchestrators.length} active
+            </div>
+          </div>
+
+          {orchestrators.length === 0 ? (
+            <div className="flex min-h-[120px] items-center justify-center rounded-[16px] border border-dashed border-white/[0.08] bg-white/[0.02] p-6 text-center">
+              <div className="max-w-[320px]">
+                <h3 className="font-display text-[14px] font-700 tracking-[-0.02em] text-text">No orchestrators configured</h3>
+                <p className="mt-2 text-[12px] leading-[1.7] text-text-3/70">
+                  Enable orchestrator mode on an agent to have it appear here with autonomous wake cycles.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {orchestrators.map((agent) => {
+                const governanceLabel = agent.orchestratorGovernance === 'approval-required'
+                  ? 'Approval required'
+                  : agent.orchestratorGovernance === 'notify-only'
+                    ? 'Notify only'
+                    : 'Autonomous'
+                const governanceTone = agent.orchestratorGovernance === 'approval-required'
+                  ? 'bg-amber-500/12 text-amber-300'
+                  : agent.orchestratorGovernance === 'notify-only'
+                    ? 'bg-sky-500/12 text-sky-300'
+                    : 'bg-emerald-500/12 text-emerald-300'
+                const isDisabled = agent.disabled === true
+                return (
+                  <div
+                    key={agent.id}
+                    className={`rounded-[16px] border p-4 ${isDisabled ? 'border-white/[0.04] bg-white/[0.01] opacity-60' : 'border-white/[0.06] bg-white/[0.02]'}`}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-700 uppercase tracking-[0.08em] ${governanceTone}`}>
+                          {governanceLabel}
+                        </span>
+                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-700 uppercase tracking-[0.08em] ${
+                          isDisabled
+                            ? 'bg-white/[0.06] text-text-3/55'
+                            : 'bg-emerald-500/12 text-emerald-300'
+                        }`}>
+                          {isDisabled ? 'Disabled' : 'Enabled'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void toggleOrchestrator(agent)}
+                        disabled={pendingAction !== null}
+                        aria-pressed={agent.orchestratorEnabled}
+                        aria-label={`${agent.orchestratorEnabled ? 'Disable' : 'Enable'} orchestrator for ${agent.name}`}
+                        className={`flex h-6 w-11 shrink-0 items-center rounded-full border px-[3px] transition-all duration-200 cursor-pointer ${
+                          agent.orchestratorEnabled
+                            ? 'border-accent-bright/35 bg-accent shadow-[0_0_0_1px_rgba(89,153,255,0.12)]'
+                            : 'border-white/[0.10] bg-white/[0.08]'
+                        } disabled:cursor-default disabled:opacity-45`}
+                      >
+                        <span className={`h-4 w-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-200 ${
+                          agent.orchestratorEnabled ? 'translate-x-[20px]' : 'translate-x-0'
+                        }`} />
+                      </button>
+                    </div>
+                    <div className="text-[14px] font-600 text-text">{agent.name}</div>
+                    {agent.description && (
+                      <div className="mt-1 text-[12px] leading-[1.7] text-text-3/72">{agent.description}</div>
+                    )}
+                    {agent.orchestratorMission && (
+                      <div className="mt-2 text-[12px] leading-[1.7] text-text-2/82">
+                        {agent.orchestratorMission.length > 120
+                          ? `${agent.orchestratorMission.slice(0, 119).trimEnd()}…`
+                          : agent.orchestratorMission}
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-3/58">
+                      {agent.orchestratorLastWakeAt && (
+                        <span>Last wake {timeAgo(agent.orchestratorLastWakeAt, now)}</span>
+                      )}
+                      {typeof agent.orchestratorCycleCount === 'number' && (
+                        <span>{agent.orchestratorCycleCount} cycle{agent.orchestratorCycleCount === 1 ? '' : 's'}</span>
+                      )}
+                      {agent.orchestratorWakeInterval && (
+                        <span>Every {agent.orchestratorWakeInterval}</span>
+                      )}
                     </div>
                   </div>
                 )

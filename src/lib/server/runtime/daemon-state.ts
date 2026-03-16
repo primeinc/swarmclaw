@@ -33,6 +33,7 @@ import type { Session, WebhookRetryEntry } from '@/types'
 import { createNotification } from '@/lib/server/create-notification'
 import { pingProvider, OPENAI_COMPATIBLE_DEFAULTS, restoreProviderHealthState } from '@/lib/server/provider-health'
 import { runIntegrityMonitor } from '@/lib/server/integrity-monitor'
+import { notifyOrchestrators } from '@/lib/server/runtime/orchestrator-events'
 import { recoverStaleDelegationJobs } from '@/lib/server/agents/delegation-jobs'
 import { restoreSwarmRegistry } from '@/lib/server/agents/subagent-swarm'
 import { pruneMainLoopState } from '@/lib/server/agents/main-agent-loop'
@@ -406,6 +407,7 @@ async function runConnectorHealthChecks(now: number) {
         connectors[connector.id] = connector
         saveConnectors(connectors)
         notify('connectors')
+        notifyOrchestrators(`Connector ${connector.name || connector.id} status: error — auto-restart exhausted after ${MAX_WAKE_ATTEMPTS} attempts`, `connector-status:${connector.id}`)
         createNotification({
           type: 'error',
           title: `Connector "${connector.name}" failed`,

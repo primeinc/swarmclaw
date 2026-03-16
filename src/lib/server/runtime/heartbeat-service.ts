@@ -6,14 +6,17 @@ import {
   DEFAULT_HEARTBEAT_SHOW_ALERTS,
   DEFAULT_HEARTBEAT_SHOW_OK,
 } from '@/lib/runtime/heartbeat-defaults'
-import { loadAgents, loadApprovals, loadSessions, loadSettings, patchSession } from '@/lib/server/storage'
-import { buildGoalAncestrySection } from '@/lib/server/chat-execution/situational-awareness'
+import { loadAgents, loadApprovals, loadSessions, loadSettings, patchSession, patchAgent, loadChatrooms, loadMission } from '@/lib/server/storage'
+import { buildGoalAncestrySection, buildPlatformStatusSummary } from '@/lib/server/chat-execution/situational-awareness'
 import { drainDeferredWakes, hasDeferredWakes } from '@/lib/server/runtime/wake-dispatcher'
 import { buildWakeTriggerContext } from '@/lib/server/runtime/heartbeat-wake'
 import { enqueueSessionRun, getSessionRunState } from '@/lib/server/runtime/session-run-manager'
 import { log } from '@/lib/server/logger'
 import { WORKSPACE_DIR } from '@/lib/server/data-dir'
-import { drainSystemEvents } from '@/lib/server/runtime/system-events'
+import { drainSystemEvents, drainOrchestratorEvents } from '@/lib/server/runtime/system-events'
+import { buildMissionContextBlock } from '@/lib/server/missions/mission-service'
+import type { Agent, Chatroom, Session } from '@/types'
+import { isOrchestratorEligible } from '@/lib/orchestrator-config'
 import { buildIdentityContinuityContext } from '@/lib/server/identity-continuity'
 import { buildMainLoopHeartbeatPrompt, isMainSession } from '@/lib/server/agents/main-agent-loop'
 import { ensureAgentThreadSession } from '@/lib/server/agents/agent-thread-session'
@@ -30,6 +33,12 @@ const MAX_CONSECUTIVE_FAILURES = 10
 const STARTUP_GRACE_MS = 180_000
 /** Sessions idle longer than 7 days are skipped — active heartbeats self-refresh lastActiveAt */
 const MAX_SESSION_IDLE_MS = 7 * 24 * 3600_000
+
+// --- Orchestrator mode constants ---
+const ORCHESTRATOR_DEFAULT_INTERVAL_SEC = 300  // 5 min
+const ORCHESTRATOR_MIN_INTERVAL_SEC = 60
+const ORCHESTRATOR_MAX_INTERVAL_SEC = 86400    // 24h
+const ORCHESTRATOR_MAX_PROMPT_CHARS = 4000
 
 interface FailureRecord {
   count: number
@@ -56,6 +65,19 @@ const state: HeartbeatState = hmrSingleton<HeartbeatState>('__swarmclaw_heartbea
   startedAt: 0,
   lastBySession: new Map<string, number>(),
   failures: new Map<string, FailureRecord>(),
+}))
+
+/** Track orchestrator wake times and failures per agent (separate from session-scoped heartbeat state) */
+interface OrchestratorState {
+  lastWakeByAgent: Map<string, number>
+  failures: Map<string, FailureRecord>
+  /** Tracks daily cycle counts: agentId:YYYY-MM-DD -> count */
+  dailyCycles: Map<string, number>
+}
+const orchestratorState: OrchestratorState = hmrSingleton<OrchestratorState>('__swarmclaw_orchestrator_state__', () => ({
+  lastWakeByAgent: new Map(),
+  failures: new Map(),
+  dailyCycles: new Map(),
 }))
 
 function parseIntBounded(value: unknown, fallback: number, min: number, max: number): number {
@@ -172,7 +194,7 @@ export function readHeartbeatFile(session: HeartbeatFileSession): string {
   return ''
 }
 
-function readIdentityFile(session: Record<string, unknown>): Record<string, string> {
+function readIdentityFile(session: { cwd?: string | null }): Record<string, string> {
   try {
     const filePath = path.join(typeof session.cwd === 'string' ? session.cwd : WORKSPACE_DIR, 'IDENTITY.md')
     if (fs.existsSync(filePath)) {
@@ -192,7 +214,16 @@ function readIdentityFile(session: Record<string, unknown>): Record<string, stri
   return {}
 }
 
-export function buildIdentityContext(session: Record<string, unknown> | undefined | null, agent: Record<string, unknown> | undefined | null): string {
+export function buildIdentityContext(
+  session: { cwd?: string | null } | undefined | null,
+  agent: {
+    name?: string | null
+    emoji?: string | null
+    creature?: string | null
+    vibe?: string | null
+    theme?: string | null
+  } | undefined | null,
+): string {
   const fileId = session ? readIdentityFile(session) : {}
   const name = fileId.name || agent?.name || ''
   const emoji = fileId.emoji || agent?.emoji || ''
@@ -732,6 +763,9 @@ export function startHeartbeatService() {
     tickHeartbeats().catch((err) => {
       log.error('heartbeat', 'Heartbeat tick failed', err?.message || String(err))
     })
+    tickOrchestratorAgents().catch((err) => {
+      log.error('orchestrator', 'Orchestrator tick failed', err?.message || String(err))
+    })
   }, HEARTBEAT_TICK_MS)
 }
 
@@ -755,6 +789,230 @@ export function getHeartbeatServiceStatus() {
   return {
     running: state.running,
     trackedSessions: state.lastBySession.size,
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Orchestrator Mode — wake prompt + tick loop
+// ═══════════════════════════════════════════════════════════════════════
+
+function getOrchestratorDailyCycleKey(agentId: string): string {
+  const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+  return `${agentId}:${today}`
+}
+
+function getOrchestratorDailyCycles(agentId: string): number {
+  return orchestratorState.dailyCycles.get(getOrchestratorDailyCycleKey(agentId)) || 0
+}
+
+function incrementOrchestratorDailyCycles(agentId: string): void {
+  const key = getOrchestratorDailyCycleKey(agentId)
+  orchestratorState.dailyCycles.set(key, (orchestratorState.dailyCycles.get(key) || 0) + 1)
+
+  // Prune old daily cycle entries (keep only today's)
+  const today = new Date().toISOString().slice(0, 10)
+  for (const k of orchestratorState.dailyCycles.keys()) {
+    if (!k.endsWith(today)) orchestratorState.dailyCycles.delete(k)
+  }
+}
+
+export function buildOrchestratorWakePrompt(session: any, agent: Agent): string {
+  const sections: string[] = []
+  let charCount = 0
+
+  const addSection = (text: string) => {
+    if (charCount + text.length > ORCHESTRATOR_MAX_PROMPT_CHARS) return false
+    sections.push(text)
+    charCount += text.length
+    return true
+  }
+
+  // 1. Identity context
+  sections.push('ORCHESTRATOR_WAKE_TICK')
+  sections.push(`Time: ${new Date().toISOString()}`)
+  charCount += 60
+
+  const identityContext = buildIdentityContext(session, agent)
+  if (identityContext) addSection(identityContext)
+
+  const description = agent.description || ''
+  if (description) addSection(`Description: ${description.slice(0, 200)}`)
+
+  // 2. Mission
+  if (agent.orchestratorMission) {
+    addSection(`## Mission\n${agent.orchestratorMission.slice(0, 500)}`)
+  }
+
+  // 3. Governance instructions
+  const governance = agent.orchestratorGovernance || 'autonomous'
+  if (governance === 'approval-required') {
+    addSection('## Governance\nYou are in APPROVAL-REQUIRED mode. Use `ask_human` before destructive actions (deleting agents, changing providers, spending over budget).')
+  } else if (governance === 'notify-only') {
+    addSection('## Governance\nYou are in NOTIFY-ONLY mode. Report observations and recommendations but do NOT take autonomous actions. Post updates in chatrooms instead.')
+  }
+
+  // 4. Platform status summary
+  try {
+    const platformStatus = buildPlatformStatusSummary()
+    addSection(platformStatus)
+  } catch { /* best-effort */ }
+
+  // 5. Orchestrator event highlights
+  const orchEvents = drainOrchestratorEvents(agent.id)
+  if (orchEvents.length > 0) {
+    const eventLines = orchEvents.slice(-15).map((e) => `- [${new Date(e.timestamp).toISOString().slice(11, 19)}] ${e.text}`)
+    addSection(`## Event Highlights\n${eventLines.join('\n')}`)
+  }
+
+  // 6. System events (session-scoped)
+  const sysEvents = drainSystemEvents(session.id)
+  if (sysEvents.length > 0) {
+    const eventBlock = sysEvents.map((e) => `- [${new Date(e.timestamp).toISOString().slice(11, 19)}] ${e.text}`).join('\n')
+    addSection(`## System Events\n${eventBlock}`)
+  }
+
+  // 7. Active mission state
+  const missionId = session.missionId || null
+  if (missionId) {
+    try {
+      const missionBlock = buildMissionContextBlock(loadMission(missionId))
+      if (missionBlock) addSection(missionBlock)
+    } catch { /* ignore */ }
+  }
+
+  // 8. Goal ancestry
+  const goalAncestry = buildGoalAncestrySection(missionId)
+  if (goalAncestry) addSection(goalAncestry)
+
+  // 9. Chatroom membership
+  try {
+    const chatrooms = Object.values(loadChatrooms()) as Chatroom[]
+    const myChatrooms = chatrooms.filter((c) => !c.archivedAt && c.agentIds?.includes(agent.id))
+    if (myChatrooms.length > 0) {
+      const chatroomLines = myChatrooms.slice(0, 5).map((c) => {
+        const recentCount = c.messages?.filter((m) => m.time > (agent.orchestratorLastWakeAt || 0)).length || 0
+        return `- ${c.name}${c.temporary ? ' (session)' : ''}: ${recentCount} new messages`
+      })
+      addSection(`## My Chatrooms\n${chatroomLines.join('\n')}`)
+    }
+  } catch { /* best-effort */ }
+
+  // 10. Instructions
+  sections.push('')
+  sections.push('You are an autonomous orchestrator. Review your mission, platform state, and recent events. Decide what needs attention.')
+  sections.push('You can: delegate tasks to agents, send messages in chatrooms you\'re part of (use @AgentName to direct to a specific agent), create temporary sessions for focused discussions, manage schedules, adjust connectors, spawn subagents.')
+  sections.push('If nothing needs attention, reply ORCHESTRATOR_OK.')
+  sections.push('Do not ask clarifying questions. Take the most reasonable action based on your mission.')
+
+  return sections.filter(Boolean).join('\n')
+}
+
+export async function tickOrchestratorAgents() {
+  const now = Date.now()
+  const settings = loadSettings()
+
+  // Respect active window (same as heartbeats)
+  const nowDate = new Date(now)
+  if (!inActiveWindow(nowDate, settings.heartbeatActiveStart, settings.heartbeatActiveEnd, settings.heartbeatTimezone)) {
+    return
+  }
+
+  // Startup grace period
+  if (state.startedAt > 0 && (now - state.startedAt) < STARTUP_GRACE_MS) return
+
+  const agents = loadAgents()
+  const orchestrators = (Object.values(agents) as Agent[]).filter(
+    (a) => a?.id
+      && a.orchestratorEnabled === true
+      && !isAgentDisabled(a)
+      && isOrchestratorEligible(a),
+  )
+
+  if (orchestrators.length === 0) return
+
+  for (const agent of orchestrators) {
+    try {
+      // Check interval elapsed
+      const intervalSec = agent.orchestratorWakeInterval != null
+        ? parseDuration(agent.orchestratorWakeInterval, ORCHESTRATOR_DEFAULT_INTERVAL_SEC)
+        : ORCHESTRATOR_DEFAULT_INTERVAL_SEC
+      const clampedIntervalSec = Math.min(Math.max(intervalSec, ORCHESTRATOR_MIN_INTERVAL_SEC), ORCHESTRATOR_MAX_INTERVAL_SEC)
+
+      const lastWake = orchestratorState.lastWakeByAgent.get(agent.id) || (agent.orchestratorLastWakeAt || 0)
+      if (now - lastWake < clampedIntervalSec * 1000) continue
+
+      // Check daily cycle limit
+      if (agent.orchestratorMaxCyclesPerDay != null && agent.orchestratorMaxCyclesPerDay > 0) {
+        const todayCycles = getOrchestratorDailyCycles(agent.id)
+        if (todayCycles >= agent.orchestratorMaxCyclesPerDay) {
+          log.info('orchestrator', `Agent ${agent.name} (${agent.id}) hit daily cycle limit (${todayCycles}/${agent.orchestratorMaxCyclesPerDay})`)
+          continue
+        }
+      }
+
+      // Check backoff from failures
+      const failRecord = orchestratorState.failures.get(agent.id)
+      if (failRecord) {
+        if (failRecord.autoDisabledAt) continue
+        const backoffMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, failRecord.count - 1), BACKOFF_MAX_MS)
+        if (now < failRecord.lastFailedAt + backoffMs) continue
+      }
+
+      // Ensure thread session exists
+      const threadSession = ensureAgentThreadSession(agent.id)
+      if (!threadSession) continue
+
+      // Skip if session is already running
+      const runState = getSessionRunState(threadSession.id)
+      if (runState.runningRunId) continue
+
+      // Build wake prompt
+      const prompt = buildOrchestratorWakePrompt(threadSession, agent)
+
+      // Enqueue the run
+      const enqueue = enqueueSessionRun({
+        sessionId: threadSession.id,
+        message: prompt,
+        internal: true,
+        source: 'orchestrator-wake',
+        mode: 'collect',
+        dedupeKey: `orchestrator:${agent.id}`,
+      })
+
+      // Update tracking state
+      orchestratorState.lastWakeByAgent.set(agent.id, now)
+      incrementOrchestratorDailyCycles(agent.id)
+
+      // Update agent storage
+      patchAgent(agent.id, (current) => {
+        if (!current) return current
+        return {
+          ...current,
+          orchestratorLastWakeAt: now,
+          orchestratorCycleCount: (typeof current.orchestratorCycleCount === 'number' ? current.orchestratorCycleCount : 0) + 1,
+          updatedAt: now,
+        }
+      })
+
+      log.info('orchestrator', `Woke orchestrator agent ${agent.name} (${agent.id}), cycle #${(agent.orchestratorCycleCount || 0) + 1}`)
+
+      // Track success/failure
+      enqueue.promise.then(() => {
+        orchestratorState.failures.delete(agent.id)
+      }).catch((err: unknown) => {
+        const prev = orchestratorState.failures.get(agent.id)
+        const newCount = (prev?.count ?? 0) + 1
+        const record: FailureRecord = { count: newCount, lastFailedAt: Date.now() }
+        if (newCount >= MAX_CONSECUTIVE_FAILURES) {
+          record.autoDisabledAt = Date.now()
+          log.warn('orchestrator', `Auto-disabling orchestrator for agent ${agent.id} after ${newCount} consecutive failures`)
+        }
+        orchestratorState.failures.set(agent.id, record)
+        log.warn('orchestrator', `Orchestrator wake failed for agent ${agent.id} (${newCount}/${MAX_CONSECUTIVE_FAILURES})`, errorMessage(err))
+      })
+    } catch (err) {
+      log.warn('orchestrator', `Error ticking orchestrator agent ${agent.id}:`, errorMessage(err))
+    }
   }
 }
 

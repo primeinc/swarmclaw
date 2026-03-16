@@ -11,6 +11,7 @@ function clean(value: string | null | undefined): string | null {
 
 export function resolveProviderCredentialId(input: {
   provider?: string | null
+  ollamaMode?: string | null
   credentialId?: string | null
 }): string | null {
   const normalizedId = clean(input.credentialId)
@@ -21,9 +22,19 @@ export function resolveProviderCredentialId(input: {
   const provider = clean(input.provider)
   if (!provider) return normalizedId
 
-  const matchingIds = Object.entries(credentials)
+  const matchingEntries = Object.entries(credentials)
     .filter(([, credential]) => credential?.provider === provider)
-    .map(([id]) => id)
+
+  if (provider === 'ollama' && clean(input.ollamaMode) === 'cloud' && matchingEntries.length > 0) {
+    return [...matchingEntries]
+      .sort((left, right) => {
+        const leftCreatedAt = typeof left[1]?.createdAt === 'number' ? left[1].createdAt : 0
+        const rightCreatedAt = typeof right[1]?.createdAt === 'number' ? right[1].createdAt : 0
+        return rightCreatedAt - leftCreatedAt
+      })[0]?.[0] || normalizedId
+  }
+
+  const matchingIds = matchingEntries.map(([id]) => id)
 
   if (matchingIds.length === 1) return matchingIds[0]
   return normalizedId

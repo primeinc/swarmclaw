@@ -1,4 +1,4 @@
-import { loadTasks, loadSchedules, loadSupervisorIncidents, loadMission } from '@/lib/server/storage'
+import { loadTasks, loadSchedules, loadSupervisorIncidents, loadMission, loadAgents, loadConnectors, loadChatrooms, loadUsage } from '@/lib/server/storage'
 import { listPersistedRuns } from '@/lib/server/runtime/run-ledger'
 import type { BoardTask, Mission, Schedule, SupervisorIncident, SessionRunRecord } from '@/types'
 
@@ -248,6 +248,90 @@ export function formatSituationalAwareness(data: SituationalAwarenessData): stri
   if (sections.length === 0) return ''
 
   return [header, ...sections].join('\n\n')
+}
+
+// --- platform status summary (for orchestrator wake prompts) ---
+
+export function buildPlatformStatusSummary(): string {
+  const now = Date.now()
+  const oneHourAgo = now - 3_600_000
+  const oneDayAgo = now - 86_400_000
+
+  // Agents
+  const agents = Object.values(loadAgents())
+  const activeAgents = agents.filter((a) => a.lastUsedAt && a.lastUsedAt > oneHourAgo)
+
+  // Tasks
+  const allTasks = Object.values(loadTasks() as Record<string, BoardTask>)
+  const queued = allTasks.filter((t) => t.status === 'queued').length
+  const running = allTasks.filter((t) => t.status === 'running').length
+  const failed24h = allTasks.filter((t) => t.status === 'failed' && t.updatedAt && t.updatedAt > oneDayAgo).length
+
+  // Schedules
+  const allSchedules = Object.values(loadSchedules())
+  const activeSchedules = allSchedules.filter((s) => s.status === 'active')
+  const overdueSchedules = activeSchedules.filter((s) => s.nextRunAt && s.nextRunAt < now)
+
+  // Connectors
+  const connectors = Object.values(loadConnectors())
+  const connectorLines: string[] = []
+  for (const c of connectors) {
+    const status = c.status === 'running' || c.status === 'connected' ? '✓' : `✗ (${c.status})`
+    connectorLines.push(`${c.platform || c.id} ${status}`)
+  }
+
+  // Chatrooms
+  const chatrooms = Object.values(loadChatrooms())
+  const activeChatrooms = chatrooms.filter((c) => !c.archivedAt && !c.temporary)
+
+  // Incidents
+  const allIncidents = Object.values(loadSupervisorIncidents())
+  const recentIncidents = allIncidents.filter((i) => i.createdAt > oneDayAgo)
+  const warnings = recentIncidents.filter((i) => i.severity === 'medium').length
+  const errors = recentIncidents.filter((i) => i.severity === 'high').length
+
+  // Budget (today's spend)
+  const todaySpend = computeTodaySpend(oneDayAgo)
+
+  const lines = [
+    '## Platform Status',
+    `- Agents: ${agents.filter((a) => !a.disabled && !a.trashedAt).length} total (${activeAgents.length} active in last hour)`,
+    `- Tasks: ${queued} queued, ${running} running${failed24h ? `, ${failed24h} failed (last 24h)` : ''}`,
+    `- Schedules: ${activeSchedules.length} active${overdueSchedules.length ? `, ${overdueSchedules.length} overdue` : ''}`,
+  ]
+
+  if (connectorLines.length > 0) {
+    lines.push(`- Connectors: ${connectorLines.join(', ')}`)
+  }
+
+  if (recentIncidents.length > 0) {
+    lines.push(`- Incidents: ${recentIncidents.length} open (${warnings} warning, ${errors} error)`)
+  }
+
+  if (activeChatrooms.length > 0) {
+    lines.push(`- Chatrooms: ${activeChatrooms.length} active`)
+  }
+
+  if (todaySpend > 0) {
+    lines.push(`- Budget: $${todaySpend.toFixed(2)} today`)
+  }
+
+  return lines.join('\n')
+}
+
+function computeTodaySpend(sinceTs: number): number {
+  try {
+    const usage = loadUsage()
+    let total = 0
+    for (const records of Object.values(usage)) {
+      for (const r of records) {
+        if (r.timestamp >= sinceTs) total += r.estimatedCost || 0
+      }
+    }
+    return total
+  } catch {
+    return 0
+  }
 }
 
 // --- main builder (loads data, calls formatter) ---

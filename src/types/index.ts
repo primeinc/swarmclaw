@@ -1157,6 +1157,16 @@ export interface Agent {
   /** Runtime-enriched: trailing 1-hour spend. Populated by GET /api/agents when hourlyBudget is set. */
   hourlySpend?: number
   maxFollowupChain?: number
+
+  // Orchestrator Mode
+  orchestratorEnabled?: boolean
+  orchestratorMission?: string
+  orchestratorWakeInterval?: string | number | null
+  orchestratorGovernance?: 'autonomous' | 'approval-required' | 'notify-only'
+  orchestratorMaxCyclesPerDay?: number | null
+  orchestratorLastWakeAt?: number | null
+  orchestratorCycleCount?: number
+
   createdAt: number
   updatedAt: number
 }
@@ -1577,6 +1587,7 @@ export interface Chatroom {
   autoAddress?: boolean
   routingRules?: ChatroomRoutingRule[]
   temporary?: boolean
+  topic?: string
   hidden?: boolean
   archivedAt?: number | null
   protocolRunId?: string | null

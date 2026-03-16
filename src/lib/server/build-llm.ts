@@ -63,7 +63,7 @@ export function buildChatModel(opts: {
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high'
 }) {
   const { provider, model, ollamaMode, apiKey, credentialId, apiEndpoint, thinkingLevel } = opts
-  const resolvedCredentialId = resolveProviderCredentialId({ provider, credentialId })
+  const resolvedCredentialId = resolveProviderCredentialId({ provider, ollamaMode: ollamaMode ?? null, credentialId })
   const resolvedApiKey = apiKey ?? resolveApiKeyFromCredential(resolvedCredentialId)
   const providers = getProviderList()
   const providerInfo = providers.find((p) => p.id === provider)
@@ -188,7 +188,11 @@ function resolvePreferredGenerationConfig(
     if (!provider || NON_LANGGRAPH_PROVIDER_IDS.has(provider) || excludeProviders.has(provider)) continue
     const providerInfo = providers.find((entry) => entry.id === provider)
     const model = normalizePreferenceValue(candidate.model) || providerInfo?.models?.[0] || ''
-    const credentialId = resolveProviderCredentialId({ provider, credentialId: candidate.credentialId })
+    const credentialId = resolveProviderCredentialId({
+      provider,
+      ollamaMode: candidate.ollamaMode || null,
+      credentialId: candidate.credentialId,
+    })
     const apiKey = resolveApiKeyFromCredential(credentialId)
     const apiEndpoint = resolveProviderApiEndpoint({
       provider,

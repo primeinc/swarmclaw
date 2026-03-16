@@ -10,6 +10,7 @@ import { createAgentTaskSession } from '@/lib/server/agents/task-session'
 import { formatValidationFailure } from '@/lib/server/tasks/task-validation'
 import { pushMainLoopEventToMainSessions } from '@/lib/server/agents/main-agent-loop'
 import { executeSessionChatTurn, type ExecuteChatTurnResult } from '@/lib/server/chat-execution/chat-execution'
+import { checkAgentBudgetLimits } from '@/lib/server/cost'
 import { extractTaskResult, formatResultBody } from '@/lib/server/tasks/task-result'
 import {
   assessAutonomyRun,
@@ -31,6 +32,7 @@ import {
 import { getCheckpointSaver } from '@/lib/server/langgraph-checkpoint'
 import { cascadeUnblock } from '@/lib/server/dag-validation'
 import { captureGuardianCheckpoint, prepareGuardianRecovery } from '@/lib/server/agents/guardian'
+import { notifyOrchestrators } from '@/lib/server/runtime/orchestrator-events'
 import type { Agent, BoardTask, Message, Session } from '@/types'
 import { buildAgentDisabledMessage, isAgentDisabled } from '@/lib/server/agents/agent-availability'
 import {
@@ -50,8 +52,6 @@ const _queueState = hmrSingleton('__swarmclaw_queue__', () => ({
   maxConcurrent: 3,
   pendingKick: false,
 }))
-
-const DISABLED_AGENT_RETRY_MS = 60_000
 
 function normalizeInt(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = typeof value === 'number'
@@ -736,8 +736,6 @@ async function executeTaskRun(
     const typedAgentForBudget = agent as Agent
     if (typedAgentForBudget.monthlyBudget || typedAgentForBudget.dailyBudget || typedAgentForBudget.hourlyBudget) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { checkAgentBudgetLimits } = require('@/lib/server/cost')
         const followupBudget = checkAgentBudgetLimits(typedAgentForBudget)
         if (!followupBudget.ok) {
           console.warn(`[queue] Budget exceeded for "${typedAgentForBudget.name}" during follow-up, stopping.`)
@@ -889,11 +887,13 @@ export function reconcileFinishedRunningTasks(): { reconciled: number; deadLette
         type: 'task_completed',
         text: `Task completed: "${task.title}" (${task.id})`,
       })
+      notifyOrchestrators(`Task completed: "${task.title}"`, `task-complete:${task.id}`)
     } else if (task.status === 'failed') {
       pushMainLoopEventToMainSessions({
         type: 'task_failed',
         text: `Task failed validation: "${task.title}" (${task.id})`,
       })
+      notifyOrchestrators(`Task failed: "${task.title}" — validation failure`, `task-fail:${task.id}`)
     }
     handleTerminalTaskResultDeliveries(task)
     cleanupTerminalOneOffSchedule(task)
@@ -1101,6 +1101,7 @@ function scheduleRetryOrDeadLetter(task: BoardTask, reason: string): 'retry' | '
     text: `Task moved to dead-letter after ${task.attempts}/${task.maxAttempts} attempts.\n\nReason: ${reason}`,
     createdAt: now,
   })
+  notifyOrchestrators(`Task failed: "${task.title}" — ${(reason || 'unknown error').slice(0, 100)}`, `task-fail:${task.id}`)
   if (task.sessionId) {
     const failure = classifyRuntimeFailure({ source: 'task', message: reason })
     recordSupervisorIncident({
@@ -1275,8 +1276,6 @@ export async function processNext() {
       const typedAgent = agent as Agent
       if (typedAgent.monthlyBudget || typedAgent.dailyBudget || typedAgent.hourlyBudget) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { checkAgentBudgetLimits } = require('@/lib/server/cost')
           const budgetCheck = checkAgentBudgetLimits(typedAgent)
           if (!budgetCheck.ok) {
             const now = Date.now()
@@ -1598,6 +1597,7 @@ export async function processNext() {
             type: 'task_completed',
             text: `Task completed: "${task.title}" (${taskId})`,
           })
+          notifyOrchestrators(`Task completed: "${task.title}"`, `task-complete:${taskId}`)
           handleTerminalTaskResultDeliveries(doneTask)
           cleanupTerminalOneOffSchedule(doneTask)
           // Clean up LangGraph checkpoints for completed tasks
@@ -1635,6 +1635,7 @@ export async function processNext() {
               type: 'task_failed',
               text: `Task failed validation: "${task.title}" (${taskId})`,
             })
+            notifyOrchestrators(`Task failed: "${task.title}" — validation failure`, `task-fail:${taskId}`)
             if (doneTask?.status === 'failed') {
               handleTerminalTaskResultDeliveries(doneTask)
               cleanupTerminalOneOffSchedule(doneTask)
@@ -1863,6 +1864,7 @@ export function recoverStalledRunningTasks(): { recovered: number; deadLettered:
         type: 'task_dead_lettered',
         text: `Task dead-lettered after stalling: "${task.title}" (${task.id}).`,
       })
+      notifyOrchestrators(`Task failed: "${task.title}" — stalled and dead-lettered`, `task-fail:${task.id}`)
     }
   }
 
@@ -1987,7 +1989,6 @@ export function promoteDeferred(agentId?: string): number {
     const typedAgent = agent as Agent
     if (typedAgent.monthlyBudget || typedAgent.dailyBudget || typedAgent.hourlyBudget) {
       try {
-        const { checkAgentBudgetLimits } = require('@/lib/server/cost')
         const check = checkAgentBudgetLimits(typedAgent)
         if (!check.ok) continue // still over budget
       } catch {}

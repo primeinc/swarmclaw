@@ -7,6 +7,7 @@ import { suspendAgentReferences } from '@/lib/server/agents/agent-cascade'
 import { notify } from '@/lib/server/ws-hub'
 import { normalizeAgentSandboxConfig } from '@/lib/agent-sandbox-defaults'
 import { normalizeCapabilitySelection } from '@/lib/capability-selection'
+import { normalizeOrchestratorConfig } from '@/lib/orchestrator-config'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ops: CollectionOps<any> = { load: () => loadAgents({ includeTrashed: true }), save: saveAgents, topic: 'agents', table: 'agents' }
@@ -49,6 +50,28 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     }
     if (body.sandboxConfig !== undefined) {
       agent.sandboxConfig = normalizeAgentSandboxConfig(body.sandboxConfig)
+    }
+    if (
+      body.provider !== undefined
+      || body.orchestratorEnabled !== undefined
+      || body.orchestratorMission !== undefined
+      || body.orchestratorWakeInterval !== undefined
+      || body.orchestratorGovernance !== undefined
+      || body.orchestratorMaxCyclesPerDay !== undefined
+    ) {
+      const orchestratorConfig = normalizeOrchestratorConfig({
+        provider: typeof body.provider === 'string' ? body.provider : agent.provider,
+        orchestratorEnabled: body.orchestratorEnabled ?? agent.orchestratorEnabled,
+        orchestratorMission: body.orchestratorMission ?? agent.orchestratorMission,
+        orchestratorWakeInterval: body.orchestratorWakeInterval ?? agent.orchestratorWakeInterval,
+        orchestratorGovernance: body.orchestratorGovernance ?? agent.orchestratorGovernance,
+        orchestratorMaxCyclesPerDay: body.orchestratorMaxCyclesPerDay ?? agent.orchestratorMaxCyclesPerDay,
+      })
+      agent.orchestratorEnabled = orchestratorConfig.orchestratorEnabled
+      agent.orchestratorMission = orchestratorConfig.orchestratorMission
+      agent.orchestratorWakeInterval = orchestratorConfig.orchestratorWakeInterval
+      agent.orchestratorGovernance = orchestratorConfig.orchestratorGovernance
+      agent.orchestratorMaxCyclesPerDay = orchestratorConfig.orchestratorMaxCyclesPerDay
     }
     if (body.preferredGatewayTags !== undefined) {
       agent.preferredGatewayTags = Array.isArray(body.preferredGatewayTags)

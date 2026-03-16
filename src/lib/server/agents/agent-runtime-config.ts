@@ -277,6 +277,7 @@ function buildRouteFromSeed(
 
   const credentialId = resolveProviderCredentialId({
     provider: providerFromGateway,
+    ollamaMode: seed.ollamaMode ?? null,
     credentialId: seed.credentialId ?? gatewayProfile?.credentialId ?? null,
   })
   const explicitEndpoint = seed.apiEndpoint ?? gatewayProfile?.endpoint ?? null

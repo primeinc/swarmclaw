@@ -17,7 +17,7 @@ function formatRoomTime(ts: number, now: number | null): string {
   return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-export function ChatroomList() {
+export function ChatroomList({ viewMode = 'chatrooms' }: { viewMode?: 'chatrooms' | 'sessions' }) {
   const now = useNow()
   const chatrooms = useChatroomStore((s) => s.chatrooms)
   const currentChatroomId = useChatroomStore((s) => s.currentChatroomId)
@@ -46,6 +46,9 @@ export function ChatroomList() {
 
   const enriched = useMemo(() => (
     Object.values(chatrooms)
+      .filter((chatroom: Chatroom) =>
+        viewMode === 'sessions' ? chatroom.temporary === true : chatroom.temporary !== true
+      )
       .map((chatroom: Chatroom) => {
         const memberNames = chatroom.agentIds
           .map((id) => agents[id]?.name)
@@ -71,7 +74,7 @@ export function ChatroomList() {
         }
       })
       .sort((a, b) => b.chatroom.updatedAt - a.chatroom.updatedAt)
-  ), [agents, chatrooms, lastReadTimestamps])
+  ), [agents, chatrooms, lastReadTimestamps, viewMode])
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -94,9 +97,9 @@ export function ChatroomList() {
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor" />
             </svg>
           }
-          title="No chatrooms yet"
-          subtitle="Create one to start a group chat"
-          action={{ label: '+ New Chatroom', onClick: () => { setEditingChatroomId(null); setChatroomSheetOpen(true) } }}
+          title={viewMode === 'sessions' ? 'No sessions yet' : 'No chatrooms yet'}
+          subtitle={viewMode === 'sessions' ? 'Orchestrator sessions will appear here' : 'Create one to start a group chat'}
+          action={viewMode === 'sessions' ? undefined : { label: '+ New Chatroom', onClick: () => { setEditingChatroomId(null); setChatroomSheetOpen(true) } }}
         />
       ) : (
         <div className="p-3 space-y-3">
@@ -123,16 +126,16 @@ export function ChatroomList() {
                 </button>
               ))}
               <span className="ml-auto text-[11px] text-text-3/55">
-                {filtered.length} room{filtered.length === 1 ? '' : 's'}
+                {filtered.length} {viewMode === 'sessions' ? 'session' : 'room'}{filtered.length === 1 ? '' : 's'}
               </span>
             </div>
           </div>
 
           {filtered.length === 0 ? (
             <div className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
-              <div className="text-[13px] font-600 text-text-2">No rooms match this view</div>
+              <div className="text-[13px] font-600 text-text-2">No {viewMode === 'sessions' ? 'sessions' : 'rooms'} match this view</div>
               <div className="mt-1 text-[12px] text-text-3/65">
-                Clear the search or switch filters to see more chatrooms.
+                Clear the search or switch filters to see more {viewMode === 'sessions' ? 'sessions' : 'chatrooms'}.
               </div>
             </div>
           ) : (

@@ -25,6 +25,7 @@ import {
   cancelLineageNode,
   type SubagentState,
 } from '@/lib/server/agents/subagent-lineage'
+import type { Agent } from '@/types'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -118,7 +119,7 @@ export interface BatchTask {
 export function _resolveSwarmExecutionMode(
   tasks: BatchTask[],
   executionMode: BatchSpawnInput['executionMode'],
-  agents = loadAgents() as unknown as Record<string, Record<string, unknown>>,
+  agents = loadAgents() as Record<string, Agent>,
 ): 'parallel' | 'serial' {
   if (executionMode === 'parallel' || executionMode === 'serial') return executionMode
   const hasOllamaTarget = tasks.some((task) => agents[task.agentId]?.provider === 'ollama')
@@ -594,7 +595,7 @@ export function restoreSwarmRegistry(): number {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { loadCollection, upsertStoredItem } = require('@/lib/server/storage')
-    const persisted = loadCollection('swarm_snapshots') as Record<string, any>
+    const persisted = loadCollection('swarm_snapshots') as Record<string, SwarmSnapshot>
     let lost = 0
     for (const [id, record] of Object.entries(persisted)) {
       if (swarmRegistry.has(id)) continue

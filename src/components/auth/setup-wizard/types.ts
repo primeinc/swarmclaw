@@ -67,6 +67,8 @@ export interface StarterDraftAgent {
   delegationTargetMode: 'all' | 'selected'
   delegationTargetAgentIds: string[]
   autoDraftSkillSuggestions: boolean
+  orchestratorEnabled: boolean
+  orchestratorMission: string
   avatarSeed: string
   avatarUrl: string | null
   enabled: boolean

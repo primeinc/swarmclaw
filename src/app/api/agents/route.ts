@@ -7,6 +7,7 @@ import { notify } from '@/lib/server/ws-hub'
 import { getAgentSpendWindows } from '@/lib/server/cost'
 import { resolveAgentToolSelection } from '@/lib/agent-default-tools'
 import { normalizeAgentSandboxConfig } from '@/lib/agent-sandbox-defaults'
+import { normalizeOrchestratorConfig } from '@/lib/orchestrator-config'
 import { AgentCreateSchema, formatZodError } from '@/lib/validation/schemas'
 import { z } from 'zod'
 export const dynamic = 'force-dynamic'
@@ -63,6 +64,14 @@ export async function POST(req: Request) {
     return NextResponse.json(formatZodError(parsed.error as z.ZodError), { status: 400 })
   }
   const body = parsed.data
+  const orchestratorConfig = normalizeOrchestratorConfig({
+    provider: body.provider,
+    orchestratorEnabled: body.orchestratorEnabled,
+    orchestratorMission: body.orchestratorMission,
+    orchestratorWakeInterval: body.orchestratorWakeInterval,
+    orchestratorGovernance: body.orchestratorGovernance,
+    orchestratorMaxCyclesPerDay: body.orchestratorMaxCyclesPerDay,
+  })
   const capabilitySelection = resolveAgentToolSelection({
     hasExplicitTools: Boolean(rawRecord && Object.prototype.hasOwnProperty.call(rawRecord, 'tools')),
     hasExplicitExtensions: Boolean(rawRecord && Object.prototype.hasOwnProperty.call(rawRecord, 'extensions')),
@@ -110,6 +119,11 @@ export async function POST(req: Request) {
     heartbeatIntervalSec: body.heartbeatIntervalSec,
     heartbeatModel: body.heartbeatModel,
     heartbeatPrompt: body.heartbeatPrompt,
+    orchestratorEnabled: orchestratorConfig.orchestratorEnabled,
+    orchestratorMission: orchestratorConfig.orchestratorMission,
+    orchestratorWakeInterval: orchestratorConfig.orchestratorWakeInterval,
+    orchestratorGovernance: orchestratorConfig.orchestratorGovernance,
+    orchestratorMaxCyclesPerDay: orchestratorConfig.orchestratorMaxCyclesPerDay,
     elevenLabsVoiceId: body.elevenLabsVoiceId,
     monthlyBudget: body.monthlyBudget ?? null,
     dailyBudget: body.dailyBudget ?? null,
