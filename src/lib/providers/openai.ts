@@ -1,7 +1,10 @@
 import fs from 'fs'
 import type { StreamChatOptions } from './index'
 import { PROVIDER_DEFAULTS, IMAGE_EXTS, TEXT_EXTS, PDF_MAX_CHARS, MAX_HISTORY_MESSAGES, writeSSE } from './provider-defaults'
+import { log } from '@/lib/server/logger'
 import { resolveImagePath } from '@/lib/server/resolve-image'
+
+const TAG = 'provider-openai'
 
 async function fileToContentParts(filePath: string): Promise<Array<Record<string, unknown>>> {
   if (!filePath || !fs.existsSync(filePath)) return []
@@ -108,7 +111,7 @@ export function streamOpenAiChat({ session, message, imagePath, imageUrl, apiKey
       const resContentType = res.headers.get('content-type') || ''
       if (resContentType.includes('text/html')) {
         const msg = 'Received HTML instead of API response. The endpoint may be misconfigured or returning a landing page.'
-        console.error(`[${session.id}] received HTML instead of API response from ${baseUrl} (provider: ${session.provider})`)
+        log.error(TAG, `[${session.id}] received HTML instead of API response from ${baseUrl} (provider: ${session.provider})`)
         writeSSE(write, 'err', msg)
         active.delete(session.id)
         reject(new Error(msg))
@@ -117,7 +120,7 @@ export function streamOpenAiChat({ session, message, imagePath, imageUrl, apiKey
 
       if (!res.ok) {
         const errBody = await res.text().catch(() => '')
-        console.error(`[${session.id}] openai error ${res.status}:`, errBody.slice(0, 200))
+        log.error(TAG, `[${session.id}] openai error ${res.status}:`, errBody.slice(0, 200))
         let errMsg = `API error (${res.status})`
         try {
           const parsed = JSON.parse(errBody)
@@ -133,7 +136,7 @@ export function streamOpenAiChat({ session, message, imagePath, imageUrl, apiKey
 
       if (!res.body) {
         const msg = `No response body from ${baseUrl}`
-        console.error(`[${session.id}] ${msg}`)
+        log.error(TAG, `[${session.id}] ${msg}`)
         active.delete(session.id)
         reject(new Error(msg))
         return
@@ -175,12 +178,12 @@ export function streamOpenAiChat({ session, message, imagePath, imageUrl, apiKey
       }
 
       if (!fullResponse) {
-        console.error(`[${session.id}] openai stream ended with no content (provider: ${session.provider}, endpoint: ${baseUrl})`)
+        log.error(TAG, `[${session.id}] openai stream ended with no content (provider: ${session.provider}, endpoint: ${baseUrl})`)
       }
     } catch (err: unknown) {
       const errObj = err as { name?: string; message?: string }
       if (errObj.name !== 'AbortError') {
-        console.error(`[${session.id}] openai request error:`, errObj.message)
+        log.error(TAG, `[${session.id}] openai request error:`, errObj.message)
         writeSSE(write, 'err', `Connection failed: ${errObj.message}`)
       }
       active.delete(session.id)

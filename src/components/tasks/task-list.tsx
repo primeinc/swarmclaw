@@ -29,7 +29,7 @@ export function TaskList({ inSidebar }: { inSidebar?: boolean }) {
   const [search, setSearch] = useState('')
   const [clearing, setClearing] = useState(false)
 
-  useEffect(() => { loadTasks() }, [])
+  useEffect(() => { loadTasks() }, [loadTasks])
   useWs('tasks', loadTasks, 5000)
 
   const sorted = useMemo(() =>

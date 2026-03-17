@@ -190,6 +190,16 @@ The building blocks are the same: **agents, tools, memory, delegation, schedules
 
 ## Release Notes
 
+### v1.2.1 Highlights
+
+- **System health endpoint**: new `/api/system/status` route returns lightweight health summary for external monitoring and uptime checks.
+- **Memory abstracts**: ~100-token LLM summaries attached to memories for efficient proactive recall without loading full content.
+- **Structured logging**: migrated 40+ files from `console.*` to the `log` module for consistent, level-aware logging across the codebase.
+- **Lint baseline improvements**: reduced lint violations from 440 to 414 (-26) through targeted fixes across server and UI code.
+- **Daemon housekeeping**: pruning for subagent processes, orchestrator state, connector sessions, and usage records to prevent resource leaks.
+- **SKILL.md v2.0.0**: comprehensive CLI documentation covering 40+ command groups with examples and usage patterns.
+- **New dev scripts**: added `type-check`, `test`, and `format` scripts to `package.json` for streamlined development workflows.
+
 ### v1.1.9 Highlights
 
 - **Docker build stability**: limit Next.js page data workers to 1 in build mode to prevent `SQLITE_BUSY` contention.

@@ -2,9 +2,12 @@
  * One-time migration: backfill allKnownPeerIds on existing connector sessions.
  * Populates the field from existing senderId, senderIdAlt, channelId, channelIdAlt, peerKey.
  */
+import { log } from '@/lib/server/logger'
 import { loadSessions, loadSettings, saveSettings, upsertStoredItem } from '../storage'
 import type { Session } from '@/types'
 import { isDirectConnectorSession } from './session-kind'
+
+const TAG = 'session-consolidation'
 
 const ALL_KNOWN_PEER_IDS_MIGRATION_FLAG = '_migration_allKnownPeerIds'
 const THREAD_CONNECTOR_MIRROR_CLEANUP_FLAG = '_migration_pruneThreadConnectorMirrors'
@@ -43,7 +46,7 @@ export function backfillAllKnownPeerIds(): { migrated: number; skipped: boolean 
   updated[ALL_KNOWN_PEER_IDS_MIGRATION_FLAG] = true
   saveSettings(updated)
   if (migrated > 0) {
-    console.log(`[session-consolidation] Backfilled allKnownPeerIds on ${migrated} sessions`)
+    log.info(TAG, `Backfilled allKnownPeerIds on ${migrated} sessions`)
   }
   return { migrated, skipped: false }
 }
@@ -81,7 +84,7 @@ export function pruneThreadConnectorMirrors(): { cleanedSessions: number; remove
   updated[THREAD_CONNECTOR_MIRROR_CLEANUP_FLAG] = true
   saveSettings(updated)
   if (removedMessages > 0) {
-    console.log(`[session-consolidation] Pruned ${removedMessages} mirrored connector message(s) from ${cleanedSessions} main session(s)`)
+    log.info(TAG, `Pruned ${removedMessages} mirrored connector message(s) from ${cleanedSessions} main session(s)`)
   }
   return { cleanedSessions, removedMessages, skipped: false }
 }

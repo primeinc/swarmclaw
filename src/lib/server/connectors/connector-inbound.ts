@@ -1,3 +1,4 @@
+import { log } from '@/lib/server/logger'
 import { genId } from '@/lib/id'
 import {
   loadConnectors,
@@ -94,6 +95,8 @@ import {
   getSessionExecutionState,
 } from '@/lib/server/runtime/session-run-manager'
 import type { ExecuteChatTurnResult } from '@/lib/server/chat-execution/chat-execution'
+
+const TAG = 'connector-inbound'
 
 type ConnectorSession = Session
 type CurrentChannelConnectorDelivery = {
@@ -205,14 +208,14 @@ async function routeOrDebounceInbound(connector: Connector, msg: InboundMessage)
     clearTimeout(pending.timer)
     pending.timer = setTimeout(() => {
       void flushDebouncedInbound(debounceKey).catch((err: unknown) => {
-        console.warn(`[connector] Debounced inbound flush failed: ${errorMessage(err)}`)
+        log.warn(TAG, `Debounced inbound flush failed: ${errorMessage(err)}`)
       })
     }, policy.inboundDebounceMs)
     pending.timer.unref?.()
   } else {
     const timer = setTimeout(() => {
       void flushDebouncedInbound(debounceKey).catch((err: unknown) => {
-        console.warn(`[connector] Debounced inbound flush failed: ${errorMessage(err)}`)
+        log.warn(TAG, `Debounced inbound flush failed: ${errorMessage(err)}`)
       })
     }, policy.inboundDebounceMs)
     timer.unref?.()
@@ -756,7 +759,7 @@ async function routeMessageToChatroom(connector: Connector, msg: InboundMessage)
     } catch (err: unknown) {
       const errMsg = errorMessage(err)
       markProviderFailure(agent.provider, errMsg)
-      console.error(`[connector] Chatroom agent ${agent.name} error:`, errMsg)
+      log.error(TAG, `Chatroom agent ${agent.name} error:`, errMsg)
     }
   }
 
@@ -785,9 +788,9 @@ async function routeMessageToChatroom(connector: Connector, msg: InboundMessage)
             replyToMessageId: replyOptions.replyToMessageId,
             threadId: replyOptions.threadId,
           })
-          console.log(`[connector] Sent chatroom media to ${msg.platform}: ${path.basename(file.path)}`)
+          log.info(TAG, `Sent chatroom media to ${msg.platform}: ${path.basename(file.path)}`)
         } catch (err: unknown) {
-          console.error(`[connector] Failed to send chatroom media ${path.basename(file.path)}:`, errorMessage(err))
+          log.error(TAG, `Failed to send chatroom media ${path.basename(file.path)}:`, errorMessage(err))
         }
       }
     }
@@ -1105,7 +1108,7 @@ If media sending fails, report the exact error and retry with a corrected path/t
         })
       } catch (err: unknown) {
         const errText = errorMessage(err)
-        console.error('[connector] queued follow-up delivery failed:', errText)
+        log.error(TAG, 'queued follow-up delivery failed:', errText)
         try {
           const { sendConnectorMessage } = await import('./connector-outbound')
           await sendConnectorMessage({
@@ -1120,7 +1123,7 @@ If media sending fails, report the exact error and retry with a corrected path/t
       }
     }).catch(async (err: unknown) => {
       const errText = errorMessage(err)
-      console.error('[connector] queued follow-up run failed:', errText)
+      log.error(TAG, 'queued follow-up run failed:', errText)
       try {
         const { sendConnectorMessage } = await import('./connector-outbound')
         await sendConnectorMessage({
@@ -1175,7 +1178,7 @@ If media sending fails, report the exact error and retry with a corrected path/t
     if (transcript) currentChannelDeliveryRef.current?.transcripts.push(transcript)
   }
   const hasTools = getEnabledCapabilityIds(session).length > 0 && session.provider !== 'claude-cli'
-  console.log(`[connector] Routing message to agent "${agent.name}" (${session.provider}/${session.model}), hasTools=${!!hasTools}`)
+  log.info(TAG, `Routing message to agent "${agent.name}" (${session.provider}/${session.model}), hasTools=${!!hasTools}`)
 
   if (hasTools) {
     try {
@@ -1269,10 +1272,10 @@ If media sending fails, report the exact error and retry with a corrected path/t
       // Use finalResponse for connectors — strips intermediate planning/tool-use text
       fullText = result.finalResponse || result.fullText
       mediaExtractionText = [result.fullText || '', ...toolMediaOutputs].filter(Boolean).join('\n\n')
-      console.log(`[connector] streamAgentChat returned ${result.fullText.length} chars total, ${fullText.length} chars final`)
+      log.info(TAG, `streamAgentChat returned ${result.fullText.length} chars total, ${fullText.length} chars final`)
     } catch (err: unknown) {
       const message = errorMessage(err)
-      console.error(`[connector] streamAgentChat error:`, message)
+      log.error(TAG, 'streamAgentChat error:', message)
       return `[Error] ${message}`
     }
   } else {
@@ -1324,7 +1327,7 @@ If media sending fails, report the exact error and retry with a corrected path/t
     } else {
       await maybeSendStatusReaction(connector, msg, 'silent')
     }
-    console.log(`[connector] Agent returned hidden control sentinel — suppressing outbound reply`)
+    log.info(TAG, 'Agent returned hidden control sentinel — suppressing outbound reply')
     logExecution(session.id, 'decision', 'Agent suppressed outbound (NO_MESSAGE)', {
       agentId: agent.id,
       detail: { platform: msg.platform, channelId: msg.channelId },
@@ -1375,7 +1378,7 @@ If media sending fails, report the exact error and retry with a corrected path/t
             replyToMessageId: replyOptions.replyToMessageId,
             threadId: replyOptions.threadId,
           })
-          console.log(`[connector] Sent media to ${msg.platform}: ${path.basename(file.path)}`)
+          log.info(TAG, `Sent media to ${msg.platform}: ${path.basename(file.path)}`)
           logExecution(session.id, 'outbound', 'Connector media sent', {
             agentId: agent.id,
             detail: {
@@ -1386,7 +1389,7 @@ If media sending fails, report the exact error and retry with a corrected path/t
             },
           })
         } catch (err: unknown) {
-          console.error(`[connector] Failed to send media ${path.basename(file.path)}:`, errorMessage(err))
+          log.error(TAG, `Failed to send media ${path.basename(file.path)}:`, errorMessage(err))
           logExecution(session.id, 'error', 'Connector media send failed', {
             agentId: agent.id,
             detail: {

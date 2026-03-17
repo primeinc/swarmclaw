@@ -62,18 +62,23 @@ describe('stripLoopDetectionMessages', () => {
     expect(stripLoopDetectionMessages(input).trim()).toBe('')
   })
 
-  it('strips generic repeat "has been called" messages', () => {
-    const input = 'Tool "search" has been called 12 times with the same input. This appears to be a stuck loop.'
+  it('strips generic repeat "You called" messages', () => {
+    const input = 'You called "browser" 6 times with identical input. Input: "{"action":"screenshot"}" — State your blocker or deliver what you have.'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips generic repeat "You called" warning messages', () => {
+    const input = 'You called "search" 4 times with identical input. Input: "query" — Try a fundamentally different approach or deliver partial results.'
     expect(stripLoopDetectionMessages(input).trim()).toBe('')
   })
 
   it('strips "would repeat the same input" messages', () => {
-    const input = 'Tool "search" would repeat the same input 12 times. Blocking before it becomes a stuck loop.'
+    const input = '"search" would repeat the same input 12 times. Input: "query" — State your blocker or deliver what you have.'
     expect(stripLoopDetectionMessages(input).trim()).toBe('')
   })
 
   it('strips "is about to repeat the same input" messages', () => {
-    const input = 'Tool "search" is about to repeat the same input 6 times. Consider a different approach.'
+    const input = '"search" is about to repeat the same input 6 times. Input: "query" — Try a different approach.'
     expect(stripLoopDetectionMessages(input).trim()).toBe('')
   })
 
@@ -99,6 +104,41 @@ describe('stripLoopDetectionMessages', () => {
 
   it('strips ping-pong "may be stuck" messages', () => {
     const input = 'Ping-pong: "read" and "write" may be stuck in an alternating loop (3 cycles).'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips output stagnation messages', () => {
+    const input = 'Output stagnation: last 8 tool calls all produced identical output. The approach is not working — try something fundamentally different or report the blocker.'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips output stagnation warning messages', () => {
+    const input = 'Output stagnation: 6 of the last 8 tool calls produced identical output. Your tools may not be making progress.'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips error convergence messages', () => {
+    const input = 'Error convergence: 5 of the last 6 tool calls returned errors. Stop retrying and report the underlying issue (likely an infrastructure or configuration problem).'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips error convergence warning messages', () => {
+    const input = 'Error convergence: 4 of the last 6 tool calls returned errors. You may be hitting a systemic issue — consider a different approach or report the blocker.'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips messages wrapped in [Error: ...] brackets', () => {
+    const input = '[Error: You called "browser" 6 times with identical input. Input: "{"action":"screenshot"}" — State your blocker or deliver what you have.]'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips [Error: ...] wrapped tool frequency messages', () => {
+    const input = '[Error: Tool "shell" called 30 times this turn. Excessive repetition — wrap up with available results.]'
+    expect(stripLoopDetectionMessages(input).trim()).toBe('')
+  })
+
+  it('strips [Error: ...] wrapped output stagnation messages', () => {
+    const input = '[Error: Output stagnation: last 8 tool calls all produced identical output.]'
     expect(stripLoopDetectionMessages(input).trim()).toBe('')
   })
 

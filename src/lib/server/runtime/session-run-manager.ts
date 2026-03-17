@@ -818,6 +818,9 @@ async function drainExecution(executionKey: string): Promise<void> {
     next.run.missionId = result.missionId || next.run.missionId || null
     finishedMissionId = next.run.missionId || null
     next.run.resultPreview = result.text?.slice(0, 280)
+    if (typeof result.inputTokens === 'number') next.run.totalInputTokens = result.inputTokens
+    if (typeof result.outputTokens === 'number') next.run.totalOutputTokens = result.outputTokens
+    if (typeof result.estimatedCost === 'number') next.run.estimatedCost = result.estimatedCost
     syncRunRecord(next.run)
     emitRunMeta(next, next.run.status, {
       persisted: result.persisted,

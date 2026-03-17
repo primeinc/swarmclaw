@@ -1,5 +1,5 @@
 import makeWASocket, {
-  useMultiFileAuthState,
+  useMultiFileAuthState as createMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   normalizeMessageContent,
@@ -22,6 +22,9 @@ import { getWhatsAppApprovedSenderIds } from './pairing'
 
 import { DATA_DIR } from '../data-dir'
 import { loadConnectors, loadSettings } from '../storage'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'whatsapp'
 
 const AUTH_DIR = path.join(DATA_DIR, 'whatsapp-auth')
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000
@@ -210,7 +213,7 @@ function transcodeToWhatsAppVoiceNote(params: {
     })
     if ((result.status ?? 1) !== 0 || !fs.existsSync(outputPath)) {
       const stderr = (result.stderr || '').trim()
-      console.warn(`[whatsapp] Failed to transcode voice note to opus/ogg${stderr ? `: ${stderr}` : ''}`)
+      log.warn(TAG, `Failed to transcode voice note to opus/ogg${stderr ? `: ${stderr}` : ''}`)
       return null
     }
     return {
@@ -396,7 +399,7 @@ export function clearAuthDir(connectorId: string): void {
   const authDir = path.join(AUTH_DIR, connectorId)
   if (fs.existsSync(authDir)) {
     fs.rmSync(authDir, { recursive: true, force: true })
-    console.log(`[whatsapp] Cleared auth state for connector ${connectorId}`)
+    log.info(TAG, `Cleared auth state for connector ${connectorId}`)
   }
 }
 
@@ -406,7 +409,7 @@ const whatsapp: PlatformConnector = {
     const authDir = path.join(AUTH_DIR, connector.id)
     if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true })
 
-    const { state, saveCreds } = await useMultiFileAuthState(authDir)
+    const { state, saveCreds } = await createMultiFileAuthState(authDir)
     const { version } = await fetchLatestBaileysVersion()
 
     let sock: ReturnType<typeof makeWASocket> | null = null
@@ -463,7 +466,7 @@ const whatsapp: PlatformConnector = {
               sent = await sock.sendMessage(channelId, { image: buf, caption, mimetype: mime })
             } catch (err: unknown) {
               const errMsg = errorMessage(err)
-              console.warn(`[whatsapp] Image send failed (${errMsg}); retrying as document: ${fName}`)
+              log.warn(TAG, `Image send failed (${errMsg}); retrying as document: ${fName}`)
               sent = await sock.sendMessage(channelId, { document: buf, fileName: fName, mimetype: mime, caption })
             }
           } else if (isAudioMime(mime)) {
@@ -523,7 +526,7 @@ const whatsapp: PlatformConnector = {
         clearReconnectTimer()
         try { sock?.end(undefined) } catch { /* ignore */ }
         sock = null
-        console.log(`[whatsapp] Stopped connector: ${connector.name}`)
+        log.info(TAG, `Stopped connector: ${connector.name}`)
       },
     }
 
@@ -545,7 +548,7 @@ const whatsapp: PlatformConnector = {
 
       const gen = ++socketGen // Capture generation for stale detection
       connectionState = 'connecting'
-      console.log(`[whatsapp] Starting socket gen=${gen} for ${connector.name} (hasCreds=${instance.hasCredentials})`)
+      log.info(TAG, `Starting socket gen=${gen} for ${connector.name} (hasCreds=${instance.hasCredentials})`)
 
       sock = makeWASocket({
         version,
@@ -564,10 +567,10 @@ const whatsapp: PlatformConnector = {
 
         const { connection, lastDisconnect, qr } = update
         if (typeof connection === 'string' && connection) connectionState = connection
-        console.log(`[whatsapp] Connection update gen=${gen}: connection=${connection}, hasQR=${!!qr}`)
+        log.info(TAG, `Connection update gen=${gen}: connection=${connection}, hasQR=${!!qr}`)
 
         if (qr) {
-          console.log(`[whatsapp] QR code generated for ${connector.name}`)
+          log.info(TAG, `QR code generated for ${connector.name}`)
           try {
             instance.qrDataUrl = await QRCode.toDataURL(qr, {
               width: 280,
@@ -575,17 +578,17 @@ const whatsapp: PlatformConnector = {
               color: { dark: '#000000', light: '#ffffff' },
             })
           } catch (err) {
-            console.error('[whatsapp] Failed to generate QR data URL:', err)
+            log.error(TAG, 'Failed to generate QR data URL:', err)
           }
         }
         if (connection === 'close') {
           instance.qrDataUrl = null
           const reason = (lastDisconnect?.error as any)?.output?.statusCode
-          console.log(`[whatsapp] Connection closed: reason=${reason} stopped=${stopped}`)
+          log.info(TAG, `Connection closed: reason=${reason} stopped=${stopped}`)
 
           if (reason === DisconnectReason.loggedOut) {
             // Session invalidated — clear auth and restart to get fresh QR
-            console.log(`[whatsapp] Logged out — clearing auth and restarting for fresh QR`)
+            log.info(TAG, `Logged out — clearing auth and restarting for fresh QR`)
             instance.authenticated = false
             instance.hasCredentials = false
             clearAuthDir(connector.id)
@@ -597,38 +600,38 @@ const whatsapp: PlatformConnector = {
           } else if (reason === 440) {
             // Conflict — another session replaced this one. Do NOT reconnect
             // (reconnecting would create a ping-pong loop with the other session)
-            console.log(`[whatsapp] Session conflict (replaced by another connection) — stopping`)
+            log.info(TAG, `Session conflict (replaced by another connection) — stopping`)
             instance.authenticated = false
             instance.onCrash?.('Session conflict — replaced by another connection')
           } else if (!stopped) {
-            console.log(`[whatsapp] Reconnecting in 3s...`)
+            log.info(TAG, `Reconnecting in 3s...`)
             scheduleReconnect(3000)
           } else {
-            console.log(`[whatsapp] Disconnected permanently`)
+            log.info(TAG, `Disconnected permanently`)
           }
         } else if (connection === 'open') {
           instance.authenticated = true
           instance.hasCredentials = true
           instance.qrDataUrl = null
-          console.log(`[whatsapp] Connected as ${sock?.user?.id}`)
+          log.info(TAG, `Connected as ${sock?.user?.id}`)
         }
       })
 
       sock.ev.on('messages.upsert', async (upsert) => {
         const { messages, type } = upsert
-        console.log(`[whatsapp] messages.upsert gen=${gen}: type=${type}, count=${messages.length}`)
+        log.info(TAG, `messages.upsert gen=${gen}: type=${type}, count=${messages.length}`)
 
         if (gen !== socketGen) {
-          console.log(`[whatsapp] Ignoring stale socket event (gen=${gen}, current=${socketGen})`)
+          log.info(TAG, `Ignoring stale socket event (gen=${gen}, current=${socketGen})`)
           return
         }
         if (type !== 'notify') {
-          console.log(`[whatsapp] Ignoring non-notify upsert type: ${type}`)
+          log.info(TAG, `Ignoring non-notify upsert type: ${type}`)
           return
         }
 
         for (const msg of messages) {
-          console.log(`[whatsapp] Processing message: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, hasConversation=${!!msg.message?.conversation}, hasExtended=${!!msg.message?.extendedTextMessage}`)
+          log.info(TAG, `Processing message: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, hasConversation=${!!msg.message?.conversation}, hasExtended=${!!msg.message?.extendedTextMessage}`)
 
           if (msg.key.remoteJid === 'status@broadcast') continue
 
@@ -637,7 +640,7 @@ const whatsapp: PlatformConnector = {
             const now = Date.now()
             const seenAt = seenInboundMessageIds.get(msgId)
             if (typeof seenAt === 'number' && now - seenAt <= INBOUND_DEDUPE_TTL_MS) {
-              console.log(`[whatsapp] Skipping duplicate inbound message id: ${msgId}`)
+              log.info(TAG, `Skipping duplicate inbound message id: ${msgId}`)
               continue
             }
             seenInboundMessageIds.set(msgId, now)
@@ -650,7 +653,7 @@ const whatsapp: PlatformConnector = {
 
           // Skip messages sent by the bot itself (tracked by ID to prevent infinite loops)
           if (msg.key.id && sentMessageIds.has(msg.key.id)) {
-            console.log(`[whatsapp] Skipping own bot reply: ${msg.key.id}`)
+            log.info(TAG, `Skipping own bot reply: ${msg.key.id}`)
             sentMessageIds.delete(msg.key.id) // Clean up
             continue
           }
@@ -662,7 +665,7 @@ const whatsapp: PlatformConnector = {
           const myPhoneNum = sock?.user?.id?.split(':')[0] || ''
           const myLid = sock?.user?.lid?.split(':')[0] || ''
           const isSelfChat = (remoteNum === myPhoneNum) || (remoteHost === 'lid' && (myLid ? remoteNum === myLid : true))
-          console.log(`[whatsapp] Self-chat check: remote=${remoteNum}@${remoteHost}, myPhone=${myPhoneNum}, myLid=${myLid}, isSelf=${isSelfChat}`)
+          log.info(TAG, `Self-chat check: remote=${remoteNum}@${remoteHost}, myPhone=${myPhoneNum}, myLid=${myLid}, isSelf=${isSelfChat}`)
           if (msg.key.fromMe && !isSelfChat) continue
 
           const jid = msg.key.remoteJid || ''
@@ -676,9 +679,9 @@ const whatsapp: PlatformConnector = {
           // Self-chat always passes the filter (it's the bot's own account)
           if (allowedJids?.length && !isSelfChat) {
             const matched = isWhatsAppInboundAllowed({ allowedJids, msg, isSelfChat })
-            console.log(`[whatsapp] JID filter: candidates=${collectWhatsAppAddressCandidates(msg).join(',')}, allowedJids=${allowedJids.join(',')}, matched=${matched}`)
+            log.info(TAG, `JID filter: candidates=${collectWhatsAppAddressCandidates(msg).join(',')}, allowedJids=${allowedJids.join(',')}, matched=${matched}`)
             if (!matched) {
-              console.log(`[whatsapp] Skipping message from non-allowed JID: ${jid}`)
+              log.info(TAG, `Skipping message from non-allowed JID: ${jid}`)
               continue
             }
           }
@@ -712,7 +715,7 @@ const whatsapp: PlatformConnector = {
               })
               media.push(saved)
             } catch (err: any) {
-              console.error(`[whatsapp] Failed to decode media: ${err?.message || String(err)}`)
+              log.error(TAG, `Failed to decode media: ${err?.message || String(err)}`)
               media.push({
                 type: mediaCandidate.kind,
                 fileName: mediaCandidate.payload?.fileName || undefined,
@@ -736,7 +739,7 @@ const whatsapp: PlatformConnector = {
             }) || undefined
           }
 
-          console.log(`[whatsapp] Message from ${inbound.senderName} (${jid}): ${inbound.text.slice(0, 80)}`)
+          log.info(TAG, `Message from ${inbound.senderName} (${jid}): ${inbound.text.slice(0, 80)}`)
 
           try {
             const reply = await resolveConnectorIngressReply(onMessage, inbound)
@@ -758,10 +761,10 @@ const whatsapp: PlatformConnector = {
                 state: 'sent',
               })
             } catch (recordErr: unknown) {
-              console.warn(`[whatsapp] Delivery recording failed (response already sent):`, errorMessage(recordErr))
+              log.warn(TAG, 'Delivery recording failed (response already sent):', errorMessage(recordErr))
             }
           } catch (err: unknown) {
-            console.error(`[whatsapp] Error handling message:`, errorMessage(err))
+            log.error(TAG, 'Error handling message:', errorMessage(err))
             try {
               await sock!.sendMessage(jid, { text: 'Sorry, I encountered an error processing your message.' })
             } catch { /* ignore */ }

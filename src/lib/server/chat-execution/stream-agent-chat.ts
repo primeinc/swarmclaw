@@ -28,6 +28,7 @@ import {
   buildCredentialAwarenessSection,
 } from '@/lib/server/chat-execution/prompt-sections'
 
+import { log } from '@/lib/server/logger'
 import { logExecution } from '@/lib/server/execution-log'
 import { buildCurrentDateTimePromptContext } from '@/lib/server/prompt-runtime-context'
 import { expandExtensionIds } from '@/lib/server/tool-aliases'
@@ -40,6 +41,7 @@ import { routeTaskIntent } from '@/lib/server/capability-router'
 import { isDirectConnectorSession } from '@/lib/server/connectors/session-kind'
 import { resolveSessionToolPolicy } from '@/lib/server/tool-capability-policy'
 import { ToolLoopTracker } from '@/lib/server/tool-loop-detection'
+import { isHeartbeatSource } from '@/lib/server/runtime/heartbeat-source'
 import { isCurrentThreadRecallRequest } from '@/lib/server/memory/memory-policy'
 import {
   resolveEffectiveSessionMemoryScopeMode,
@@ -98,6 +100,8 @@ import {
   isResearchSynthesis as classifiedIsResearchSynthesis,
   type MessageClassification,
 } from '@/lib/server/chat-execution/message-classifier'
+
+const TAG = 'stream-agent-chat'
 
 // LangGraph unhandledRejection handler has been moved to src/instrumentation.ts
 // to avoid re-registration on every HMR reload.
@@ -175,6 +179,8 @@ interface StreamAgentChatOpts {
   fallbackCredentialIds?: string[]
   signal?: AbortSignal
   promptMode?: PromptMode
+  /** Run source (e.g. 'heartbeat', 'chat', 'scheduler') — used for heartbeat-specific tuning. */
+  source?: string
 }
 
 export interface StreamAgentChatResult {
@@ -207,6 +213,7 @@ export async function streamAgentChat(opts: StreamAgentChatOpts): Promise<Stream
 async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAgentChatResult> {
   const startTs = Date.now()
   const { session, message, imagePath, imageUrl, attachedFiles, apiKey, systemPrompt, extraSystemContext, write, history, fallbackCredentialIds, signal } = opts
+  const isHeartbeat = isHeartbeatSource(opts.source)
   const promptMode: PromptMode = opts.promptMode ?? resolvePromptMode(session)
   const isMinimalPrompt = promptMode === 'minimal'
   const isConnectorSession = isDirectConnectorSession(session)
@@ -366,7 +373,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
     const extensionContextParts = await collectCapabilityAgentContext(session, sessionExtensions, message, history)
     promptParts.push(...extensionContextParts)
   } catch (err: unknown) {
-    console.error('[stream-agent-chat] Capability context injection failed:', err instanceof Error ? err.message : String(err))
+    log.error(TAG, 'Capability context injection failed:', err instanceof Error ? err.message : String(err))
   }
 
   // Project context — full mode only
@@ -410,11 +417,15 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
   {
     const agents = loadAgents()
     const agentForMemory = session.agentId ? agents[session.agentId] : null
-    const memoryBlock = await buildProactiveMemorySection(
+    const memoryResult = await buildProactiveMemorySection(
       session, agentForMemory, message, activeProjectContext.projectRoot,
       isMinimalPrompt, currentThreadRecallRequest,
     )
-    if (memoryBlock) promptParts.push(memoryBlock)
+    if (memoryResult.section) promptParts.push(memoryResult.section)
+    // Persist injection dedup counts so repeated memories are suppressed
+    if (Object.keys(memoryResult.injectedIds).length > 0) {
+      session.injectedMemoryIds = memoryResult.injectedIds
+    }
   }
 
   // Goal anchor — keeps the agent focused when context is long.
@@ -429,9 +440,26 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
   const budget = isMinimalPrompt ? MINIMAL_PROMPT_BUDGET : DEFAULT_PROMPT_BUDGET
   const budgetResult = applyPromptBudget(promptParts, budget)
   if (budgetResult.truncated) {
-    console.warn(`[stream-agent-chat] Prompt truncated: ${budgetResult.originalChars} chars → ${budget.maxTotalChars} chars (mode=${promptMode})`)
+    log.warn(TAG, `Prompt truncated: ${budgetResult.originalChars} chars → ${budget.maxTotalChars} chars (mode=${promptMode})`)
   } else if (isOverWarningThreshold(budgetResult.originalChars, budget)) {
-    console.warn(`[stream-agent-chat] Prompt near budget: ${budgetResult.originalChars}/${budget.maxTotalChars} chars (mode=${promptMode})`)
+    log.warn(TAG, `Prompt near budget: ${budgetResult.originalChars}/${budget.maxTotalChars} chars (mode=${promptMode})`)
+  }
+  // Emit prompt section telemetry (no-op when perf disabled)
+  if (perf.isEnabled()) {
+    const sectionSizes: Record<string, number> = {}
+    for (let i = 0; i < rawPromptParts.length; i++) {
+      const part = rawPromptParts[i]
+      const headerMatch = part.match(/^##?\s+(.+?)[\n\r]/)
+      const label = headerMatch ? headerMatch[1].slice(0, 30) : `section_${i}`
+      sectionSizes[label] = (sectionSizes[label] || 0) + part.length
+    }
+    perf.start('prompt', 'budget', {
+      sessionId: session.id,
+      totalChars: budgetResult.originalChars,
+      budgetMax: budget.maxTotalChars,
+      truncated: budgetResult.truncated,
+      sections: sectionSizes,
+    })()
   }
   let prompt = budgetResult.prompt
 
@@ -443,6 +471,8 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
     ...(typeof settings.toolLoopFrequencyWarn === 'number' && { toolFrequencyWarn: settings.toolLoopFrequencyWarn }),
     ...(typeof settings.toolLoopFrequencyCritical === 'number' && { toolFrequencyCritical: settings.toolLoopFrequencyCritical }),
     ...(typeof settings.toolLoopCircuitBreaker === 'number' && { circuitBreaker: settings.toolLoopCircuitBreaker }),
+    // Heartbeat runs are brief status checks — tighten thresholds significantly
+    ...(isHeartbeat && { toolFrequencyWarn: 8, toolFrequencyCritical: 15 }),
   })
   const emittedPreToolWarnings = new Set<string>()
   const recursionLimit = getAgentLoopRecursionLimit(runtime)
@@ -453,14 +483,14 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
 
   async function buildContentForFile(filePath: string): Promise<LangChainContentPart | string | null> {
     if (!fs.existsSync(filePath)) {
-      console.log(`[stream-agent-chat] FILE NOT FOUND: ${filePath}`)
+      log.info(TAG, `FILE NOT FOUND: ${filePath}`)
       return null
     }
     const name = filePath.split('/').pop() || 'file'
     if (IMAGE_EXTS.test(filePath)) {
       const buf = fs.readFileSync(filePath)
       if (buf.length === 0) {
-        console.warn(`[stream-agent-chat] Image file is empty: ${filePath}`)
+        log.warn(TAG, `Image file is empty: ${filePath}`)
         return `[Attached image: ${name} — file is empty]`
       }
       const data = buf.toString('base64')
@@ -587,8 +617,8 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
         summarize,
       })
       effectiveHistory = result.messages
-      console.log(
-        `[stream-agent-chat] Auto-compacted ${session.id}: ${recentHistory.length} → ${effectiveHistory.length} msgs` +
+      log.info(TAG,
+        `Auto-compacted ${session.id}: ${recentHistory.length} → ${effectiveHistory.length} msgs` +
         ` (prompt history ${promptHistoryTokens} tokens)` +
         (result.summaryAdded ? ' (LLM summary)' : ' (sliding window fallback)'),
       )
@@ -783,7 +813,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
   // Init turn state and limits
   // -------------------------------------------------------------------------
   const state = new ChatTurnState()
-  const limits = new ContinuationLimits(isConnectorSession)
+  const limits = new ContinuationLimits(isConnectorSession, isHeartbeat)
   const routingDecision = routeTaskIntent(message, sessionExtensions, null)
   const explicitRequiredToolNames = getExplicitRequiredToolNames(message, sessionExtensions)
 
@@ -1069,9 +1099,9 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
 
       if (!shouldContinue) break
 
-      // Reset tool loop tracker on loop_recovery so the agent gets a fresh frequency budget
+      // Partial reset on loop_recovery: clear frequency counts but preserve circuit breaker + repeat history
       if (shouldContinue === 'loop_recovery') {
-        loopTracker.reset()
+        loopTracker.resetFrequencyCounts()
       }
 
       const continuationAssistantText = shouldContinue === 'memory_write_followthrough'

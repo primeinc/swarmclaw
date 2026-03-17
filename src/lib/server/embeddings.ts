@@ -1,5 +1,8 @@
 import { loadSettings, loadCredentials, decryptKey } from './storage'
 import { hmrSingleton } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'embeddings'
 
 interface PipelineState {
   instance: unknown
@@ -62,7 +65,7 @@ export async function getEmbedding(text: string): Promise<number[] | null> {
       return await ollamaEmbed(text, model, settings.embeddingEndpoint)
     }
   } catch (err: unknown) {
-    console.error(`[embeddings] Error computing embedding:`, err instanceof Error ? err.message : String(err))
+    log.error(TAG, 'Error computing embedding:', err instanceof Error ? err.message : String(err))
   }
 
   return null

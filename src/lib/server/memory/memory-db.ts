@@ -5,6 +5,7 @@ import { createHash } from 'crypto'
 import { genId } from '@/lib/id'
 import type { MemoryEntry, FileReference, MemoryImage, MemoryReference } from '@/types'
 import { getEmbedding, cosineSimilarity, serializeEmbedding, deserializeEmbedding } from '@/lib/server/embeddings'
+import { hmrSingleton } from '@/lib/shared-utils'
 import { applyMMR } from '@/lib/server/mmr'
 import { calculateTemporalDecayMultiplier, isDecayExempt } from '@/lib/server/memory/temporal-decay'
 import { loadSettings } from '@/lib/server/storage'
@@ -17,9 +18,13 @@ import {
 } from '@/lib/server/memory/memory-graph'
 import { isWorkingMemoryCategory } from '@/lib/server/memory/memory-tiers'
 
+import { generateAbstract } from '@/lib/server/memory/memory-abstract'
 import { DATA_DIR, MEMORY_IMAGES_DIR, WORKSPACE_DIR } from '@/lib/server/data-dir'
 import { safeJsonParse } from '@/lib/server/json-utils'
 import { tryResolvePathWithinBaseDir } from '@/lib/server/path-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'memory-db'
 
 const DB_PATH = path.join(DATA_DIR, 'memory.db')
 const IMAGES_DIR = MEMORY_IMAGES_DIR
@@ -207,19 +212,28 @@ function shouldSkipSearchQuery(input: string): boolean {
 }
 
 // Simple cache for query embeddings to avoid blocking
-const embeddingCache = new Map<string, number[]>()
+const EMBEDDING_CACHE_MAX = 100
+const EMBEDDING_CACHE_EVICT_TO = 80
+const embeddingCache = hmrSingleton('__swarmclaw_memory_embedding_cache__', () => new Map<string, number[]>())
+
+function evictEmbeddingCache(): void {
+  if (embeddingCache.size <= EMBEDDING_CACHE_MAX) return
+  const excess = embeddingCache.size - EMBEDDING_CACHE_EVICT_TO
+  const iter = embeddingCache.keys()
+  for (let i = 0; i < excess; i++) {
+    const k = iter.next().value
+    if (k !== undefined) embeddingCache.delete(k)
+  }
+}
 
 function getEmbeddingSync(query: string): number[] | null {
   const cached = embeddingCache.get(query)
   if (cached) return cached
+  // Evict before async call to bound growth regardless of resolution
+  evictEmbeddingCache()
   // Kick off async computation for next time
   getEmbedding(query).then((emb) => {
     if (emb) embeddingCache.set(query, emb)
-    // Evict old entries
-    if (embeddingCache.size > 100) {
-      const firstKey = embeddingCache.keys().next().value
-      if (firstKey) embeddingCache.delete(firstKey)
-    }
   }).catch(() => { /* ok */ })
   return null
 }
@@ -524,6 +538,7 @@ function initDb() {
     'lastAccessedAt INTEGER DEFAULT 0',
     'contentHash TEXT',
     'reinforcementCount INTEGER DEFAULT 0',
+    'abstract TEXT',
   ]) {
     try { db.exec(`ALTER TABLE memories ADD COLUMN ${col}`) } catch { /* already exists */ }
   }
@@ -612,7 +627,7 @@ function initDb() {
       migrated++
     }
     if (migrated > 0) {
-      console.log(`[memory-db] Migrated ${migrated} legacy memory row(s) to graph schema`)
+      log.info(TAG, `Migrated ${migrated} legacy memory row(s) to graph schema`)
     }
   })
   migrateLegacyRows()
@@ -632,7 +647,7 @@ function initDb() {
       })
       tx()
     }
-    console.log(`[memory-db] Backfilled contentHash for ${backfillRows.length} memory row(s)`)
+    log.info(TAG, `Backfilled contentHash for ${backfillRows.length} memory row(s)`)
   }
 
   // Fresh installs now start with an empty memory graph.
@@ -642,9 +657,9 @@ function initDb() {
     insert: db.prepare(`
       INSERT INTO memories (
         id, agentId, sessionId, category, title, content, metadata, embedding,
-        "references", filePaths, image, imagePath, linkedMemoryIds, pinned, sharedWith, contentHash, createdAt, updatedAt
+        "references", filePaths, image, imagePath, linkedMemoryIds, pinned, sharedWith, contentHash, abstract, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     update: db.prepare(`
       UPDATE memories
@@ -748,6 +763,7 @@ function initDb() {
       lastAccessedAt: typeof row.lastAccessedAt === 'number' ? row.lastAccessedAt : 0,
       contentHash: typeof row.contentHash === 'string' ? row.contentHash : undefined,
       reinforcementCount: typeof row.reinforcementCount === 'number' ? row.reinforcementCount : 0,
+      abstract: typeof row.abstract === 'string' ? row.abstract : null,
       createdAt: typeof row.createdAt === 'number' ? row.createdAt : Date.now(),
       updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : Date.now(),
     }
@@ -819,6 +835,7 @@ function initDb() {
         pinned,
         sharedWith,
         contentHash,
+        null, // abstract computed async
         now, now,
       )
       // Compute embedding in background (fire-and-forget)
@@ -829,7 +846,16 @@ function initDb() {
             serializeEmbedding(emb), id,
           )
         }
-      }).catch((err: unknown) => { console.warn(`[memory-db] Embedding generation failed for memory ${id}:`, err instanceof Error ? err.message : String(err)) })
+      }).catch((err: unknown) => { log.warn(TAG, `Embedding generation failed for memory ${id}:`, err instanceof Error ? err.message : String(err)) })
+
+      // Generate abstract for long content in background (fire-and-forget)
+      if (content.length > 200) {
+        generateAbstract(content, title).then((abstract) => {
+          if (abstract) {
+            db.prepare(`UPDATE memories SET abstract = ? WHERE id = ?`).run(abstract, id)
+          }
+        }).catch(() => { /* non-critical */ })
+      }
 
       // Keep memory links bidirectional by default.
       if (linkedMemoryIds.length) this.link(id, linkedMemoryIds, true)
@@ -1086,7 +1112,7 @@ function initDb() {
           })
         }
       } catch (err: unknown) {
-        console.warn('[memory-db] Vector search failed, falling back to FTS:', err instanceof Error ? err.message : String(err))
+        log.warn(TAG, 'Vector search failed, falling back to FTS:', err instanceof Error ? err.message : String(err))
       }
 
       // Merge: deduplicate by id
@@ -1146,8 +1172,8 @@ function initDb() {
 
       const elapsed = Date.now() - startedAt
       if (elapsed > 1200) {
-        console.warn(
-          `[memory-db] Slow search ${elapsed}ms (scope=${scopeMode}, rerank=${rerankMode}, rawLen=${String(query || '').length}, fts="${ftsQuery.slice(0, 180)}")`,
+        log.warn(TAG,
+          `Slow search ${elapsed}ms (scope=${scopeMode}, rerank=${rerankMode}, rawLen=${String(query || '').length}, fts="${ftsQuery.slice(0, 180)}")`,
         )
       }
       return out

@@ -7,6 +7,9 @@ import { resolveConnectorIngressReply } from './ingress-delivery'
 import { deliverChunkedConnectorText } from './delivery'
 import { downloadInboundMediaToUpload, inferInboundMediaType, mimeFromPath, isImageMime, isAudioMime } from './media'
 import { errorMessage } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'telegram'
 
 const telegram: PlatformConnector = {
   async start(connector, botToken, onMessage): Promise<ConnectorInstance> {
@@ -20,23 +23,23 @@ const telegram: PlatformConnector = {
 
     // Log all errors
     bot.catch((err) => {
-      console.error(`[telegram] Bot error:`, err.message || err)
+      log.error(TAG, 'Bot error:', err.message || err)
     })
 
     // Delete any existing webhook so long polling works
     await bot.api.deleteWebhook().catch((err) => {
-      console.error('[telegram] Failed to delete webhook:', err.message)
+      log.error(TAG, 'Failed to delete webhook:', err.message)
     })
 
     // Log all incoming updates for debugging
     bot.use(async (ctx, next) => {
-      console.log(`[telegram] Update received: chat=${ctx.chat?.id}, from=${ctx.from?.first_name}, hasText=${!!ctx.message?.text}`)
+      log.info(TAG, `Update received: chat=${ctx.chat?.id}, from=${ctx.from?.first_name}, hasText=${!!ctx.message?.text}`)
       await next()
     })
 
     // Handle /start command (required for new conversations)
     bot.command('start', async (ctx) => {
-      console.log(`[telegram] /start from ${ctx.from?.first_name} (chat=${ctx.chat.id})`)
+      log.info(TAG, `/start from ${ctx.from?.first_name} (chat=${ctx.chat.id})`)
       await ctx.reply('Hello! I\'m ready to chat. Send me a message.')
     })
 
@@ -51,15 +54,15 @@ const telegram: PlatformConnector = {
       // that appear as short bracketed strings like [rr], [e], [read] etc.
       const hasMedia = raw.photo || raw.video || raw.audio || raw.voice || raw.document || raw.animation
       if (!hasMedia && /^\[.{1,5}\]$/.test(text.trim())) {
-        console.log(`[telegram] Ignoring system event from ${ctx.from.first_name}: ${text}`)
+        log.info(TAG, `Ignoring system event from ${ctx.from.first_name}: ${text}`)
         return
       }
 
-      console.log(`[telegram] Message from ${ctx.from.first_name} (chat=${chatId}): ${String(text).slice(0, 80)}`)
+      log.info(TAG, `Message from ${ctx.from.first_name} (chat=${chatId}): ${String(text).slice(0, 80)}`)
 
       // Filter by allowed chats if configured
       if (allowedChats && !allowedChats.includes(chatId)) {
-        console.log(`[telegram] Skipping — chat ${chatId} not in allowed list: ${allowedChats.join(',')}`)
+        log.info(TAG, `Skipping — chat ${chatId} not in allowed list: ${allowedChats.join(',')}`)
         return
       }
 
@@ -125,7 +128,7 @@ const telegram: PlatformConnector = {
           })
           if (stored) media.push(stored)
         } catch (err: any) {
-          console.warn(`[telegram] Failed to fetch media ${m.fileId}:`, err?.message || String(err))
+          log.warn(TAG, `Failed to fetch media ${m.fileId}:`, err?.message || String(err))
           media.push({
             type: m.type,
             fileName: m.fileName,
@@ -175,7 +178,7 @@ const telegram: PlatformConnector = {
           },
         })
       } catch (err: any) {
-        console.error(`[telegram] Error handling message:`, err.message)
+        log.error(TAG, 'Error handling message:', err.message)
         try {
           await ctx.reply('Sorry, I encountered an error processing your message.')
         } catch { /* ignore */ }
@@ -268,7 +271,7 @@ const telegram: PlatformConnector = {
       async stop() {
         botRunning = false
         await bot.stop()
-        console.log(`[telegram] Bot stopped`)
+        log.info(TAG, 'Bot stopped')
       },
     }
 
@@ -277,12 +280,12 @@ const telegram: PlatformConnector = {
       allowed_updates: ['message', 'edited_message'],
       onStart: (botInfo) => {
         botUsername = botInfo.username || ''
-        console.log(`[telegram] Bot started as @${botInfo.username} — polling for updates`)
+        log.info(TAG, `Bot started as @${botInfo.username} — polling for updates`)
       },
     }).catch((err: unknown) => {
       botRunning = false
       const errMsg = errorMessage(err)
-      console.error(`[telegram] Polling stopped with error:`, errMsg)
+      log.error(TAG, 'Polling stopped with error:', errMsg)
       instance.onCrash?.(`Polling stopped: ${errMsg}`)
     })
 

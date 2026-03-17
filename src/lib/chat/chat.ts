@@ -53,10 +53,26 @@ export async function streamChat(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
+  const STREAM_IDLE_TIMEOUT_MS = 300_000
 
   while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const idleAbort = new Promise<{ done: true; value: undefined }>((resolve) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true
+        resolve({ done: true, value: undefined })
+      }, STREAM_IDLE_TIMEOUT_MS)
+    })
+    const { done, value } = await Promise.race([reader.read(), idleAbort])
+    clearTimeout(timeoutId)
+    if (done) {
+      if (timedOut) {
+        onEvent?.({ t: 'err', text: 'Stream timed out (no data for 5 minutes)' })
+        reader.cancel().catch(() => {})
+      }
+      break
+    }
     buf += decoder.decode(value, { stream: true })
     const lines = buf.split('\n')
     buf = lines.pop() || ''

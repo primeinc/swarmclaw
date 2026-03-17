@@ -54,7 +54,7 @@ const MAX_COORDINATOR_SYNTHESIS = 3
 const MAX_COORDINATOR_DELEGATION_NUDGE = 1
 
 /** Max loop recovery continuations (tool_frequency limit resets) */
-const MAX_LOOP_RECOVERY = 2
+const MAX_LOOP_RECOVERY = 1
 
 /** Max context overflow retries (emergency context reduction) */
 const MAX_CONTEXT_OVERFLOW = 2
@@ -64,7 +64,7 @@ const MAX_CONTEXT_OVERFLOW = 2
 export class ContinuationLimits {
   private readonly limits: Record<BudgetedContinuation, LimitEntry>
 
-  constructor(isConnectorSession: boolean) {
+  constructor(isConnectorSession: boolean, isHeartbeat = false) {
     let maxDeliverableFollowthroughs = MAX_DELIVERABLE_FOLLOWTHROUGH
     let maxExecutionFollowthroughs = MAX_EXECUTION_FOLLOWTHROUGH
     let maxAttachmentFollowthroughs = MAX_ATTACHMENT_FOLLOWTHROUGH
@@ -78,6 +78,9 @@ export class ContinuationLimits {
       maxToolSummaryRetries = 1
       maxUnfinishedToolFollowthroughs = 1
     }
+
+    // Heartbeats should not need loop recovery — they are brief status checks
+    const maxLoopRecovery = isHeartbeat ? 0 : MAX_LOOP_RECOVERY
 
     this.limits = {
       recursion: { count: 0, max: MAX_RECURSION },
@@ -94,7 +97,7 @@ export class ContinuationLimits {
       tool_summary: { count: 0, max: maxToolSummaryRetries },
       coordinator_synthesis: { count: 0, max: MAX_COORDINATOR_SYNTHESIS },
       coordinator_delegation_nudge: { count: 0, max: MAX_COORDINATOR_DELEGATION_NUDGE },
-      loop_recovery: { count: 0, max: MAX_LOOP_RECOVERY },
+      loop_recovery: { count: 0, max: maxLoopRecovery },
     }
   }
 

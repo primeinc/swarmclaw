@@ -11,6 +11,9 @@ import { loadSessions, patchAgent, patchSession } from '../storage'
 import { inferExtensionPublisherSourceFromUrl } from '@/lib/extension-sources'
 import { errorMessage } from '@/lib/shared-utils'
 import { getEnabledCapabilityIds, isExternalExtensionId, normalizeCapabilitySelection } from '@/lib/capability-selection'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'session-tools-discovery'
 
 function grantCapabilitySelection(current: {
   tools?: string[] | null
@@ -62,7 +65,7 @@ async function executeDiscoveryAction(args: Record<string, unknown>, bctx?: Tool
   const q = typeof normalized.query === 'string' ? normalized.query : ''
   const extensionId = explicitExtensionId || (action === 'request_access' ? q.trim() : '')
 
-  console.log('[discovery] Executing action:', action, { query: q, extensionId })
+  log.info(TAG, 'Executing action:', { action, query: q, extensionId })
 
   try {
     switch (action) {
@@ -87,7 +90,7 @@ async function executeDiscoveryAction(args: Record<string, unknown>, bctx?: Tool
         const results: Record<string, unknown>[] = []
         
         try {
-          console.log('[discovery] Searching ClawHub...')
+          log.info(TAG, 'Searching ClawHub...')
           const hubResults = await searchClawHub(q)
           if (hubResults && hubResults.skills) {
             results.push(...hubResults.skills.map((s) => ({
@@ -101,11 +104,11 @@ async function executeDiscoveryAction(args: Record<string, unknown>, bctx?: Tool
             })))
           }
         } catch (err: unknown) {
-          console.error('[discovery] ClawHub search failed:', errorMessage(err))
+          log.error(TAG, 'ClawHub search failed:', errorMessage(err))
         }
 
         try {
-          console.log('[discovery] Searching SwarmClaw registry...')
+          log.info(TAG, 'Searching SwarmClaw registry...')
           const registryResults = new Map<string, Record<string, unknown>>()
           const registries = [
             { url: 'https://swarmclaw.ai/registry/extensions.json', catalogSource: 'swarmclaw-site' },
@@ -133,7 +136,7 @@ async function executeDiscoveryAction(args: Record<string, unknown>, bctx?: Tool
           }
           results.push(...registryResults.values())
         } catch (err: unknown) {
-          console.error('[discovery] SC Registry search failed:', errorMessage(err))
+          log.error(TAG, 'SC Registry search failed:', errorMessage(err))
         }
 
         if (results.length === 0) {
@@ -226,7 +229,7 @@ async function executeDiscoveryAction(args: Record<string, unknown>, bctx?: Tool
     }
   } catch (err: unknown) {
     const msg = errorMessage(err)
-    console.error('[discovery] executeDiscoveryAction failed:', msg)
+    log.error(TAG, 'executeDiscoveryAction failed:', msg)
     return `Error: ${msg}`
   }
 }

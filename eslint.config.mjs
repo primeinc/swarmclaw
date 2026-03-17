@@ -16,7 +16,17 @@ const eslintConfig = defineConfig([
     "data/**",
     "artifacts/**",
     ".workbench/**",
+    // Git worktrees (created by parallel agent workflows)
+    ".worktrees/**",
   ]),
+  // Prevent console.* in server-side code — use `import { log } from '@/lib/server/logger'` instead.
+  {
+    files: ["src/lib/server/**/*.ts", "src/lib/providers/**/*.ts", "src/app/api/**/*.ts", "src/instrumentation.ts"],
+    ignores: ["**/*.test.ts", "src/lib/server/logger.ts"],
+    rules: {
+      "no-console": "warn",
+    },
+  },
 ]);
 
 export default eslintConfig;

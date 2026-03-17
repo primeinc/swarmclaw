@@ -34,7 +34,7 @@ export function SecretSheet() {
 
   useEffect(() => {
     if (open) loadAgents()
-  }, [open])
+  }, [open, loadAgents])
 
   useEffect(() => {
     if (editing) {

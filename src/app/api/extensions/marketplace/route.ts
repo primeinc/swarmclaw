@@ -3,6 +3,9 @@ import { inferExtensionPublisherSourceFromUrl } from '@/lib/extension-sources'
 import { searchClawHub } from '@/lib/server/skills/clawhub-client'
 import type { ExtensionCatalogSource } from '@/types'
 import { errorMessage } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'api-extensions-marketplace'
 
 export const dynamic = 'force-dynamic'
 
@@ -71,7 +74,7 @@ export async function GET(req: Request) {
         })
       }
     } catch (err: unknown) {
-      console.warn('[extensions-marketplace] Registry failed:', {
+      log.warn(TAG, 'Registry failed:', {
         registryUrl: registry.url,
         error: errorMessage(err),
       })
@@ -93,7 +96,7 @@ export async function GET(req: Request) {
       catalogSource: 'clawhub',
     })))
   } catch (err: unknown) {
-    console.warn('[extensions-marketplace] ClawHub failed:', errorMessage(err))
+    log.warn(TAG, 'ClawHub failed:', errorMessage(err))
   }
 
   allExtensions.sort((a, b) => {

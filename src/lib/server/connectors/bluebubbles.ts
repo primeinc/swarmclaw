@@ -1,6 +1,9 @@
+import { log } from '@/lib/server/logger'
 import crypto from 'node:crypto'
 import type { PlatformConnector, ConnectorInstance, InboundMessage, InboundMedia } from './types'
 import { resolveConnectorIngressReply } from './ingress-delivery'
+
+const TAG = 'bluebubbles'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 const DEFAULT_WEBHOOK_PATH = '/api/connectors/{id}/webhook'
@@ -283,8 +286,8 @@ const bluebubbles: PlatformConnector = {
       throw new Error(`BlueBubbles ping failed (${pingRes.status})`)
     }
 
-    console.log(`[bluebubbles] Connected to ${serverUrl}`)
-    console.log(`[bluebubbles] Inbound webhook endpoint: ${DEFAULT_WEBHOOK_PATH.replace('{id}', connector.id)}`)
+    log.info(TAG, `Connected to ${serverUrl}`)
+    log.info(TAG, `Inbound webhook endpoint: ${DEFAULT_WEBHOOK_PATH.replace('{id}', connector.id)}`)
 
     return {
       connector,
@@ -302,7 +305,7 @@ const bluebubbles: PlatformConnector = {
         stopped = true
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         delete (globalThis as any)[handlerKey]
-        console.log(`[bluebubbles] Connector stopped`)
+        log.info(TAG, 'Connector stopped')
       },
     }
   },
@@ -351,7 +354,7 @@ async function sendBlueBubblesText(params: {
     // BlueBubbles may return empty body on success in some setups.
     const message = getErrorMessage(err)
     if (!message.toLowerCase().includes('json')) {
-      console.warn(`[bluebubbles] Unable to parse send response body: ${message}`)
+      log.warn(TAG, `Unable to parse send response body: ${message}`)
     }
     return {}
   }

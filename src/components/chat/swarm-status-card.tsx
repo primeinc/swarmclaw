@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { useAppStore } from '@/stores/use-app-store'
 
@@ -115,7 +115,7 @@ const SwarmMemberCard = memo(function SwarmMemberCard({
   agents,
 }: {
   member: SwarmMemberData
-  agents: Record<string, any>
+  agents: Record<string, { avatarSeed?: string; avatarUrl?: string | null; name?: string }>
 }) {
   const [expanded, setExpanded] = useState(false)
   const cfg = MEMBER_STATUS_CONFIG[member.status]
@@ -206,6 +206,13 @@ const SwarmMemberCard = memo(function SwarmMemberCard({
 function SwarmSummaryBar({ data }: { data: SwarmStatusData }) {
   const cfg = SWARM_STATUS_CONFIG[data.status]
   const isTerminal = data.status === 'completed' || data.status === 'partial' || data.status === 'failed'
+  const [now, setNow] = useState(data.completedAt ?? data.createdAt)
+
+  useEffect(() => {
+    if (isTerminal) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [isTerminal])
 
   const formatDuration = (ms: number) => {
     if (ms < 1000) return `${ms}ms`
@@ -215,7 +222,7 @@ function SwarmSummaryBar({ data }: { data: SwarmStatusData }) {
 
   const durationMs = data.completedAt
     ? data.completedAt - data.createdAt
-    : Date.now() - data.createdAt
+    : now - data.createdAt
 
   return (
     <div

@@ -93,6 +93,8 @@ export interface ProjectResourceSummary {
   openTaskCount: number
   queuedTaskCount: number
   runningTaskCount: number
+  failedTaskCount: number
+  staleTaskCount: number
   activeScheduleCount: number
   secretCount: number
   skillCount: number
@@ -118,6 +120,15 @@ export function summarizeProjectResources(projectId: string): ProjectResourceSum
   const openTasks = tasks
     .filter((task) => ['backlog', 'queued', 'running'].includes(String(task.status || '').toLowerCase()))
     .sort(byUpdatedDesc)
+  const failedTasks = tasks.filter((task) => String(task.status || '').toLowerCase() === 'failed')
+  const now = Date.now()
+  const staleDays = 3 * 24 * 60 * 60 * 1000
+  const staleTasks = tasks.filter((task) => {
+    const status = String(task.status || '').toLowerCase()
+    if (['completed', 'cancelled', 'archived'].includes(status)) return false
+    const lastUpdate = Number(task.updatedAt || task.createdAt || 0)
+    return lastUpdate > 0 && (now - lastUpdate) > staleDays
+  })
   const activeSchedules = schedules
     .filter((schedule) => String(schedule.status || '').toLowerCase() === 'active')
     .sort(byUpdatedDesc)
@@ -129,6 +140,8 @@ export function summarizeProjectResources(projectId: string): ProjectResourceSum
     openTaskCount: openTasks.length,
     queuedTaskCount: openTasks.filter((task) => task.status === 'queued').length,
     runningTaskCount: openTasks.filter((task) => task.status === 'running').length,
+    failedTaskCount: failedTasks.length,
+    staleTaskCount: staleTasks.length,
     activeScheduleCount: activeSchedules.length,
     secretCount: secrets.length,
     skillCount: skills.length,

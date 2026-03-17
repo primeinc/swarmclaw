@@ -1,4 +1,7 @@
 import { hmrSingleton } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'instrumentation'
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
@@ -12,12 +15,12 @@ export async function register() {
       backfillAllKnownPeerIds()
       pruneThreadConnectorMirrors()
     } catch (err) {
-      console.error('[instrumentation] connector session consolidation failed:', err)
+      log.error(TAG, 'connector session consolidation failed:', err)
     }
 
     // In worker-only mode, we FORCE the daemon to start, but skip the WebSocket listener
     if (isWorkerOnly) {
-      console.log('[instrumentation] Booting in WORKER ONLY mode')
+      log.info(TAG, 'Booting in WORKER ONLY mode')
       ensureDaemonStarted('worker-boot')
     } else {
       // In normal mode, we start the WS server, and conditionally start the daemon if autostart allows
@@ -34,12 +37,12 @@ export async function register() {
     const shutdown = async (signal: string) => {
       if (shutdownState.shuttingDown) return
       shutdownState.shuttingDown = true
-      console.log(`[server] ${signal} received, shutting down gracefully...`)
+      log.info(TAG, `${signal} received, shutting down gracefully...`)
       try {
         const { stopDaemon } = await import('@/lib/server/runtime/daemon-state')
         await stopDaemon({ source: signal })
       } catch (err) {
-        console.error('[instrumentation] Failed to stop daemon during shutdown:', err)
+        log.error(TAG, 'Failed to stop daemon during shutdown:', err)
       }
       if (!isWorkerOnly) {
         await closeWsServer()
@@ -54,10 +57,10 @@ export async function register() {
       // that occur during dev server restarts when stdio pipes break
       process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EPIPE') {
-          console.warn('[instrumentation] Ignoring EPIPE (expected during dev server restart)')
+          log.warn(TAG, 'Ignoring EPIPE (expected during dev server restart)')
           return
         }
-        console.error('[instrumentation] Uncaught exception:', err)
+        log.error(TAG, 'Uncaught exception:', err)
         process.exit(1)
       })
 
@@ -73,7 +76,7 @@ export async function register() {
         ) {
           return
         }
-        console.error('[instrumentation] Unhandled rejection:', err)
+        log.error(TAG, 'Unhandled rejection:', err)
       })
 
       shutdownState.registered = true

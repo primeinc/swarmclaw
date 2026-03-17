@@ -43,35 +43,49 @@ export function stripInternalJson(text: string): string {
  * - Tool "X" called N times ...
  * - Tool "X" would be called N times ...
  * - Tool "X" is nearing overuse ...
- * - Tool "X" has been called N times with the same input ...
- * - Tool "X" would repeat the same input N times ...
- * - Tool "X" is about to repeat the same input N times ...
+ * - You called "X" N times with identical input ...
+ * - "X" would repeat the same input N times ...
+ * - "X" is about to repeat the same input N times ...
  * - Circuit breaker: "X" called N times ...
  * - Circuit breaker: "X" would be called N times ...
  * - Polling stall: "X" returned identical output N times ...
  * - Ping-pong: "X" and "Y" are alternating ...
  * - Ping-pong: "X" and "Y" may be stuck ...
+ * - Output stagnation: last N / N of the last N ...
+ * - Error convergence: N of the last N ...
  */
 const LOOP_DETECTION_RE = new RegExp(
   [
     // Tool frequency: called / would be called / nearing overuse
     String.raw`Tool "[^"]*" (?:called|would be called) \d+ times[^\n]*`,
     String.raw`Tool "[^"]*" is nearing overuse[^\n]*`,
-    // Generic repeat: has been called / would repeat / is about to repeat
-    String.raw`Tool "[^"]*" (?:has been called|would repeat the same input|is about to repeat the same input) \d+ times[^\n]*`,
+    // Generic repeat: "You called" (post-call) / "X" would repeat / is about to repeat (preview)
+    String.raw`You called "[^"]*" \d+ times[^\n]*`,
+    String.raw`"[^"]*" (?:would repeat the same input|is about to repeat the same input) \d+ times[^\n]*`,
     // Circuit breaker
     String.raw`Circuit breaker: "[^"]*" (?:called|would be called) \d+ times[^\n]*`,
     // Polling stall
     String.raw`Polling stall: "[^"]*" returned identical output \d+ times[^\n]*`,
     // Ping-pong
     String.raw`Ping-pong: "[^"]*" and "[^"]*" (?:are alternating|may be stuck)[^\n]*`,
+    // Output stagnation
+    String.raw`Output stagnation:[^\n]*`,
+    // Error convergence
+    String.raw`Error convergence:[^\n]*`,
   ].join('|'),
   'g',
 )
 
+/**
+ * Matches loop detection messages wrapped in `[Error: ...]` brackets
+ * (from the err SSE event handler in use-chat-store.ts).
+ */
+const LOOP_DETECTION_WRAPPED_RE = /\[Error: (?:Tool "[^"]*" (?:called|would be called) \d+ times|Tool "[^"]*" is nearing overuse|You called "[^"]*" \d+ times|"[^"]*" (?:would repeat the same input|is about to repeat the same input) \d+ times|Circuit breaker: "[^"]*" (?:called|would be called) \d+ times|Polling stall: "[^"]*" returned identical output \d+ times|Ping-pong: "[^"]*" and "[^"]*" (?:are alternating|may be stuck)|Output stagnation:|Error convergence:)[^\]]*\]/g
+
 /** Remove loop detection messages that the LLM echoed from tool error results. */
 export function stripLoopDetectionMessages(text: string): string {
-  return text.replace(LOOP_DETECTION_RE, '')
+  // Strip [Error: ...] wrapped versions first, before the inner regex eats the content
+  return text.replace(LOOP_DETECTION_WRAPPED_RE, '').replace(LOOP_DETECTION_RE, '')
 }
 
 // ---------------------------------------------------------------------------

@@ -13,8 +13,11 @@ import crypto from 'node:crypto'
 import { HumanMessage } from '@langchain/core/messages'
 import { z } from 'zod'
 import { buildLLM } from '@/lib/server/build-llm'
+import { log } from '@/lib/server/logger'
 import { hmrSingleton } from '@/lib/shared-utils'
 import type { Message } from '@/types'
+
+const TAG = 'message-classifier'
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -221,7 +224,7 @@ export async function classifyMessage(
     ])
 
     const durationMs = Date.now() - startMs
-    console.log(`[message-classifier] session=${input.sessionId} completed in ${durationMs}ms`)
+    log.info(TAG, `session=${input.sessionId} completed in ${durationMs}ms`)
 
     const classification = parseClassificationResponse(responseText)
     if (classification) {
@@ -230,7 +233,7 @@ export async function classifyMessage(
     return classification
   } catch (err: unknown) {
     const durationMs = Date.now() - startMs
-    console.warn(`[message-classifier] session=${input.sessionId} failed in ${durationMs}ms: ${err instanceof Error ? err.message : 'unknown'}`)
+    log.warn(TAG, `session=${input.sessionId} failed in ${durationMs}ms: ${err instanceof Error ? err.message : 'unknown'}`)
     return null
   }
 }

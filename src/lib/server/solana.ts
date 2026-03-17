@@ -129,11 +129,17 @@ export function getSolanaExplorerUrl(cluster: SolanaCluster | string | null | un
   return `https://explorer.solana.com/${prefix}/${value}${clusterSuffix}`
 }
 
+const CONNECTION_CACHE_MAX = 50
 const connectionCache = new Map<string, Connection>()
 
 function getCachedConnection(url: string): Connection {
   let conn = connectionCache.get(url)
   if (!conn) {
+    // FIFO eviction if cache exceeds cap
+    if (connectionCache.size >= CONNECTION_CACHE_MAX) {
+      const firstKey = connectionCache.keys().next().value
+      if (firstKey !== undefined) connectionCache.delete(firstKey)
+    }
     conn = new Connection(url, {
       commitment: 'confirmed',
       disableRetryOnRateLimit: true,

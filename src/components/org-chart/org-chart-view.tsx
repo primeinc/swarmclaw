@@ -21,6 +21,7 @@ import type { ContextAction } from './org-chart-context-menu'
 import { useOrgChartPanZoom } from './use-org-chart-pan-zoom'
 import { useOrgChartDrag } from './use-org-chart-drag'
 import { useNavigate } from '@/lib/app/navigation'
+import { useWs } from '@/hooks/use-ws'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 
 const NODE_W = 200
@@ -56,6 +57,9 @@ export function OrgChartView() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadAgents(); loadSessions() }, [])
+
+  useWs('agents', loadAgents, 60_000)
+  useWs('sessions', loadSessions, 30_000)
 
   // Running agents — derived from sessions
   const runningAgentIds = useMemo(() => {

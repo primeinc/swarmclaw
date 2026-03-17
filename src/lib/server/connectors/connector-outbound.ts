@@ -1,3 +1,4 @@
+import { log } from '@/lib/server/logger'
 import {
   loadConnectors,
   loadSession, upsertSession,
@@ -18,6 +19,8 @@ import {
 import { enqueueConnectorOutbox } from './outbox'
 import { connectorRuntimeState, runningConnectors } from './runtime-state'
 import { recordHealthEvent, startConnector } from './connector-lifecycle'
+
+const TAG = 'connector-outbound'
 
 const running = runningConnectors
 const { recentOutbound } = connectorRuntimeState
@@ -161,7 +164,7 @@ export async function sendConnectorMessage(params: {
 
   // Apply NO_MESSAGE filter at the delivery layer so all outbound paths respect it
   if ((suppressHiddenText || isNoMessage(sanitizedText)) && !params.imageUrl && !params.fileUrl && !params.mediaPath) {
-    console.log(`[connector] sendConnectorMessage: NO_MESSAGE — suppressing outbound send`)
+    log.info(TAG, 'sendConnectorMessage: NO_MESSAGE — suppressing outbound send')
     return { connectorId, platform: connector.platform, channelId: params.channelId, suppressed: true }
   }
 
@@ -178,7 +181,7 @@ export async function sendConnectorMessage(params: {
     text: sanitizedText,
     dedupeKey: params.dedupeKey,
   })) {
-    console.log(`[connector] sendConnectorMessage: duplicate suppressed for ${connectorId}:${channelId}`)
+    log.info(TAG, `sendConnectorMessage: duplicate suppressed for ${connectorId}:${channelId}`)
     return { connectorId, platform: connector.platform, channelId, suppressed: true }
   }
 
@@ -226,7 +229,7 @@ export async function sendConnectorMessage(params: {
   } catch (err: unknown) {
     if (!isRecoverableConnectorSendError(err)) throw err
     const errMsg = errorMessage(err)
-    console.warn(`[connector] Outbound send failed for ${connectorId}; attempting automatic restart`, { error: errMsg })
+    log.warn(TAG, `Outbound send failed for ${connectorId}; attempting automatic restart`, { error: errMsg })
     recordHealthEvent(connectorId, 'disconnected', `Outbound send failed: ${errMsg}`)
     await startConnector(connectorId)
     result = await sendThroughCurrentInstance()

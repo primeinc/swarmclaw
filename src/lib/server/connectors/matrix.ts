@@ -1,8 +1,11 @@
+import { log } from '@/lib/server/logger'
 import fs from 'fs'
 import path from 'path'
 import { DATA_DIR } from '../data-dir'
 import type { PlatformConnector, ConnectorInstance, InboundMessage } from './types'
 import { resolveConnectorIngressReply } from './ingress-delivery'
+
+const TAG = 'matrix'
 
 const matrix: PlatformConnector = {
   async start(connector, botToken, onMessage): Promise<ConnectorInstance> {
@@ -52,7 +55,7 @@ const matrix: PlatformConnector = {
         if (!reply) return
         await client.sendText(roomId, reply.visibleText)
       } catch (err: any) {
-        console.error(`[matrix] Error handling message:`, err.message)
+        log.error(TAG, 'Error handling message:', err.message)
         try {
           await client.sendText(roomId, 'Sorry, I encountered an error processing your message.')
         } catch { /* ignore */ }
@@ -60,7 +63,7 @@ const matrix: PlatformConnector = {
     })
 
     await client.start()
-    console.log(`[matrix] Bot connected to ${homeserverUrl}`)
+    log.info(TAG, `Bot connected to ${homeserverUrl}`)
 
     return {
       connector,
@@ -69,7 +72,7 @@ const matrix: PlatformConnector = {
       },
       async stop() {
         client.stop()
-        console.log(`[matrix] Bot disconnected`)
+        log.info(TAG, 'Bot disconnected')
       },
     }
   },

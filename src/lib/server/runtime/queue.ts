@@ -1,3 +1,4 @@
+import { log } from '@/lib/server/logger'
 import { matchesCapabilities, filterAgentsByCapabilities, capabilityMatchScore } from '@/lib/server/agents/capability-match'
 import { genId } from '@/lib/id'
 import { dedup, hmrSingleton, jitteredBackoff } from '@/lib/shared-utils'
@@ -43,6 +44,8 @@ import {
   refreshTaskCompletionValidation,
 } from '@/lib/server/tasks/task-lifecycle'
 import { noteMissionTaskFinished, noteMissionTaskStarted } from '@/lib/server/missions/mission-service'
+
+const TAG = 'queue'
 
 export const collectTaskConnectorFollowupTargets = collectTaskConnectorFollowupTargetsImpl
 export const resolveTaskOriginConnectorFollowupTarget = resolveTaskOriginConnectorFollowupTargetImpl
@@ -649,7 +652,7 @@ function queueTaskAutonomyObservation(input: {
     toolEvents: input.toolEvents,
     sourceMessage: input.sourceMessage,
   }).catch((err: unknown) => {
-    console.warn(`[queue] Autonomy observation failed for ${input.runId}:`, err)
+    log.warn(TAG, `[queue] Autonomy observation failed for ${input.runId}:`, err)
   })
 }
 
@@ -739,7 +742,7 @@ async function executeTaskRun(
       try {
         const followupBudget = checkAgentBudgetLimits(typedAgentForBudget)
         if (!followupBudget.ok) {
-          console.warn(`[queue] Budget exceeded for "${typedAgentForBudget.name}" during follow-up, stopping.`)
+          log.warn(TAG, `[queue] Budget exceeded for "${typedAgentForBudget.name}" during follow-up, stopping.`)
           break
         }
       } catch {}
@@ -967,7 +970,7 @@ export function disableSessionHeartbeat(sessionId: string | null | undefined) {
   session.heartbeatEnabled = false
   session.lastActiveAt = Date.now()
   saveSessions(sessions)
-  console.log(`[queue] Disabled heartbeat on session ${sessionId} (task finished)`)
+  log.info(TAG, `[queue] Disabled heartbeat on session ${sessionId} (task finished)`)
 }
 
 export function enqueueTask(taskId: string) {
@@ -1062,7 +1065,7 @@ export function validateCompletedTasksQueue() {
   if (tasksDirty) { saveTasks(tasks); notify('tasks') }
   if (sessionsDirty) saveSessions(sessions)
   if (demoted > 0) {
-    console.warn(`[queue] Demoted ${demoted} invalid completed task(s) to failed after validation audit`)
+    log.warn(TAG, `[queue] Demoted ${demoted} invalid completed task(s) to failed after validation audit`)
   }
   return { checked, demoted }
 }
@@ -1208,7 +1211,7 @@ export async function processNext() {
       let recovered = false
       for (const [id, t] of Object.entries(allTasks) as [string, BoardTask][]) {
         if (t.status === 'queued' && !queueSet.has(id)) {
-          console.log(`[queue] Recovering orphaned queued task: "${t.title}" (${id})`)
+          log.info(TAG, `[queue] Recovering orphaned queued task: "${t.title}" (${id})`)
           pushQueueUnique(currentQueue, id)
           recovered = true
         }
@@ -1243,7 +1246,7 @@ export async function processNext() {
           // Put it back in the queue and skip
           pushQueueUnique(queue, taskId)
           saveQueue(queue)
-          console.log(`[queue] Skipping task "${task.title}" (${taskId}) — blocked by incomplete dependencies`)
+          log.info(TAG, `[queue] Skipping task "${task.title}" (${taskId}) — blocked by incomplete dependencies`)
           return
         }
       }
@@ -1277,7 +1280,7 @@ export async function processNext() {
             return a.name.localeCompare(b.name)
           })
           const rerouted = candidates[0]
-          console.log(`[queue] Rerouting task "${task.title}" (${taskId}) from agent "${agent.name}" to "${rerouted.name}" — capability match`)
+          log.info(TAG, `[queue] Rerouting task "${task.title}" (${taskId}) from agent "${agent.name}" to "${rerouted.name}" — capability match`)
           task.agentId = rerouted.id
           agent = rerouted
         } else {
@@ -1473,7 +1476,7 @@ export async function processNext() {
         saveSessions(sessions)
       }
 
-      console.log(`[queue] Running task "${task.title}" (${taskId}) with ${agent.name}`)
+      log.info(TAG, `[queue] Running task "${task.title}" (${taskId}) with ${agent.name}`)
 
       try {
         const taskRunId = `${taskId}:attempt-${(task.attempts || 0) + 1}`
@@ -1508,7 +1511,7 @@ export async function processNext() {
             toolEvents: taskRun.toolEvents,
             sourceMessage: task.description || task.title,
           })
-          console.warn(`[queue] Task "${task.title}" cancelled during execution`)
+          log.warn(TAG, `[queue] Task "${task.title}" cancelled during execution`)
           return
         }
         if (t2[taskId]) {
@@ -1596,10 +1599,10 @@ export async function processNext() {
                 else if (opencodeId) t2[taskId].cliProvider = 'opencode-cli'
                 else if (geminiId) t2[taskId].cliProvider = 'gemini-cli'
               }
-              console.log(`[queue] CLI resume IDs for task ${taskId}: claude=${claudeId}, codex=${codexId}, opencode=${opencodeId}, gemini=${geminiId}`)
+              log.info(TAG, `[queue] CLI resume IDs for task ${taskId}: claude=${claudeId}, codex=${codexId}, opencode=${opencodeId}, gemini=${geminiId}`)
             }
           } catch (e) {
-            console.warn(`[queue] Failed to extract CLI resume IDs for task ${taskId}:`, e)
+            log.warn(TAG, `[queue] Failed to extract CLI resume IDs for task ${taskId}:`, e)
           }
 
           saveTasks(t2)
@@ -1640,7 +1643,7 @@ export async function processNext() {
           cleanupTerminalOneOffSchedule(doneTask)
           // Clean up LangGraph checkpoints for completed tasks
           getCheckpointSaver().deleteThread(taskId).catch((e) =>
-            console.warn(`[queue] Failed to clean up checkpoints for task ${taskId}:`, e)
+            log.warn(TAG, `[queue] Failed to clean up checkpoints for task ${taskId}:`, e)
           )
           // Cascade unblock: auto-queue tasks whose blockers are all done
           const latestTasks = loadTasks()
@@ -1649,7 +1652,7 @@ export async function processNext() {
             saveTasks(latestTasks)
             for (const uid of unblockedIds) {
               enqueueTask(uid)
-              console.log(`[queue] Auto-unblocked task "${latestTasks[uid]?.title}" (${uid})`)
+              log.info(TAG, `[queue] Auto-unblocked task "${latestTasks[uid]?.title}" (${uid})`)
             }
             notify('tasks')
           }
@@ -1659,15 +1662,15 @@ export async function processNext() {
               const { wakeProtocolRunFromTaskCompletion } = await import('@/lib/server/protocols/protocol-service')
               wakeProtocolRunFromTaskCompletion(taskId)
             } catch (e) {
-              console.warn(`[queue] Failed to wake protocol run for task ${taskId}:`, e)
+              log.warn(TAG, `[queue] Failed to wake protocol run for task ${taskId}:`, e)
             }
           }
-          console.log(`[queue] Task "${task.title}" completed`)
+          log.info(TAG, `[queue] Task "${task.title}" completed`)
         } else if (doneTask?.status === 'cancelled') {
-          console.warn(`[queue] Task "${task.title}" cancelled during execution`)
+          log.warn(TAG, `[queue] Task "${task.title}" cancelled during execution`)
         } else {
           if (doneTask?.status === 'queued') {
-            console.warn(`[queue] Task "${task.title}" scheduled for retry`)
+            log.warn(TAG, `[queue] Task "${task.title}" scheduled for retry`)
           } else {
             pushMainLoopEventToMainSessions({
               type: 'task_failed',
@@ -1678,12 +1681,12 @@ export async function processNext() {
               handleTerminalTaskResultDeliveries(doneTask)
               cleanupTerminalOneOffSchedule(doneTask)
             }
-            console.warn(`[queue] Task "${task.title}" failed completion validation`)
+            log.warn(TAG, `[queue] Task "${task.title}" failed completion validation`)
           }
         }
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err || 'Unknown error')
-        console.error(`[queue] Task "${task.title}" failed:`, errMsg)
+        log.error(TAG, `[queue] Task "${task.title}" failed:`, errMsg)
         const taskRunId = `${taskId}:attempt-${(task.attempts || 0) + 1}`
         const t2 = loadTasks()
         if (isCancelledTask(t2[taskId])) {
@@ -1699,7 +1702,7 @@ export async function processNext() {
             error: t2[taskId].error || errMsg,
             sourceMessage: task.description || task.title,
           })
-          console.warn(`[queue] Task "${task.title}" aborted because it was cancelled`)
+          log.warn(TAG, `[queue] Task "${task.title}" aborted because it was cancelled`)
           return
         }
         if (t2[taskId]) {
@@ -1720,9 +1723,9 @@ export async function processNext() {
                 source: 'task-repair',
                 runId: repairRunId,
               })
-              console.log(`[queue] Repair turn completed for task "${task.title}" (${taskId})`)
+              log.info(TAG, `[queue] Repair turn completed for task "${task.title}" (${taskId})`)
             } catch (repairErr: unknown) {
-              console.warn(`[queue] Repair turn failed for task "${task.title}":`, repairErr instanceof Error ? repairErr.message : String(repairErr))
+              log.warn(TAG, `[queue] Repair turn failed for task "${task.title}":`, repairErr instanceof Error ? repairErr.message : String(repairErr))
               // If repair fails, attempt guardian recovery
               const taskCwd = t2[taskId].cwd || WORKSPACE_DIR
               prepareGuardianRecovery({
@@ -1784,9 +1787,9 @@ export async function processNext() {
         })
         const latest = loadTasks()[taskId] as BoardTask | undefined
         if (latest?.status === 'queued') {
-          console.warn(`[queue] Task "${task.title}" queued for retry after error`)
+          log.warn(TAG, `[queue] Task "${task.title}" queued for retry after error`)
         } else if (latest?.status === 'cancelled') {
-          console.warn(`[queue] Task "${task.title}" stayed cancelled after abort`)
+          log.warn(TAG, `[queue] Task "${task.title}" stayed cancelled after abort`)
         } else {
           pushMainLoopEventToMainSessions({
             type: 'task_failed',
@@ -1828,7 +1831,7 @@ export function cleanupFinishedTaskSessions() {
   }
   if (cleaned > 0) {
     saveSessions(sessions)
-    console.log(`[queue] Disabled heartbeat on ${cleaned} session(s) with finished tasks`)
+    log.info(TAG, `[queue] Disabled heartbeat on ${cleaned} session(s) with finished tasks`)
   }
 }
 
@@ -1976,7 +1979,7 @@ export function resumeQueue() {
   for (const task of Object.values(tasks) as BoardTask[]) {
     if (task.status === 'queued' && !queue.includes(task.id)) {
       applyTaskPolicyDefaults(task)
-      console.log(`[queue] Recovering stuck queued task: "${task.title}" (${task.id})`)
+      log.info(TAG, `[queue] Recovering stuck queued task: "${task.title}" (${task.id})`)
       queue.push(task.id)
       task.queuedAt = task.queuedAt || Date.now()
       modified = true
@@ -2004,7 +2007,7 @@ export function resumeQueue() {
     recovered++
   }
   if (recovered > 0) {
-    console.log(`[queue] Recovered ${recovered} orphaned running task(s) on boot`)
+    log.info(TAG, `[queue] Recovered ${recovered} orphaned running task(s) on boot`)
   }
 
   if (modified) {
@@ -2013,7 +2016,7 @@ export function resumeQueue() {
   }
 
   if (queue.length > 0) {
-    console.log(`[queue] Resuming ${queue.length} queued task(s) on boot`)
+    log.info(TAG, `[queue] Resuming ${queue.length} queued task(s) on boot`)
     processNext()
   }
 }

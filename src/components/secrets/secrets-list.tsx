@@ -18,7 +18,7 @@ export function SecretsList({ inSidebar }: Props) {
 
   useEffect(() => {
     loadSecrets()
-  }, [])
+  }, [loadSecrets])
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()

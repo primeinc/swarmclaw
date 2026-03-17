@@ -3,6 +3,9 @@ import path from 'path'
 import crypto from 'crypto'
 
 import { DATA_DIR, IS_BUILD_BOOTSTRAP } from './data-dir'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'storage-auth'
 
 // --- .env loading ---
 function loadEnv() {
@@ -24,7 +27,7 @@ if (!IS_BUILD_BOOTSTRAP && !process.env.CREDENTIAL_SECRET) {
   const envPath = path.join(process.cwd(), '.env.local')
   fs.appendFileSync(envPath, `\nCREDENTIAL_SECRET=${secret}\n`)
   process.env.CREDENTIAL_SECRET = secret
-  console.log('[credentials] Generated CREDENTIAL_SECRET in .env.local')
+  log.info(TAG, 'Generated CREDENTIAL_SECRET in .env.local')
 }
 
 // Auto-generate ACCESS_KEY if missing (used for simple auth)
@@ -35,10 +38,7 @@ if (!IS_BUILD_BOOTSTRAP && !process.env.ACCESS_KEY) {
   fs.appendFileSync(envPath, `\nACCESS_KEY=${key}\n`)
   process.env.ACCESS_KEY = key
   fs.writeFileSync(SETUP_FLAG, key)
-  console.log(`\n${'='.repeat(50)}`)
-  console.log(`  ACCESS KEY: ${key}`)
-  console.log(`  Use this key to connect from the browser.`)
-  console.log(`${'='.repeat(50)}\n`)
+  log.info(TAG, `ACCESS KEY: ${key} — Use this key to connect from the browser.`)
 }
 
 export function getAccessKey(): string {

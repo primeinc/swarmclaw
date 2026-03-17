@@ -5,6 +5,9 @@ import type { Connector } from '@/types'
 import type { PlatformConnector, ConnectorInstance, InboundMessage } from './types'
 import { resolveConnectorIngressReply } from './ingress-delivery'
 import { errorMessage } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'email'
 
 interface EmailConfig {
   imapHost: string
@@ -79,7 +82,7 @@ const email: PlatformConnector = {
       try {
         await imap.connect()
         connected = true
-        console.log(`[email] IMAP connected to ${config.imapHost}`)
+        log.info(TAG, `IMAP connected to ${config.imapHost}`)
 
         // Get the current highest UID as highwater mark (don't process old messages)
         const lock = await imap.getMailboxLock(folder)
@@ -87,14 +90,14 @@ const email: PlatformConnector = {
           const status = await imap.status(folder, { uidNext: true })
           // uidNext is the next UID that will be assigned; current highest is uidNext - 1
           highwaterUid = typeof status.uidNext === 'number' ? status.uidNext - 1 : 0
-          console.log(`[email] Initial highwater UID: ${highwaterUid} in ${folder}`)
+          log.info(TAG, `Initial highwater UID: ${highwaterUid} in ${folder}`)
         } finally {
           lock.release()
         }
       } catch (err: unknown) {
         connected = false
         const msg = errorMessage(err)
-        console.error(`[email] IMAP connection failed: ${msg}`)
+        log.error(TAG, `IMAP connection failed: ${msg}`)
         throw err
       }
     }
@@ -107,7 +110,7 @@ const email: PlatformConnector = {
         lock = await imap.getMailboxLock(folder)
       } catch (err: unknown) {
         const msg = errorMessage(err)
-        console.error(`[email] Failed to acquire mailbox lock: ${msg}`)
+        log.error(TAG, `Failed to acquire mailbox lock: ${msg}`)
         connected = false
         return
       }
@@ -127,7 +130,7 @@ const email: PlatformConnector = {
             await processMessage(msg)
           } catch (err: unknown) {
             const errMsg = errorMessage(err)
-            console.error(`[email] Error processing message UID ${msg.uid}: ${errMsg}`)
+            log.error(TAG, `Error processing message UID ${msg.uid}: ${errMsg}`)
           }
           if (msg.uid > highwaterUid) {
             highwaterUid = msg.uid
@@ -137,7 +140,7 @@ const email: PlatformConnector = {
         const errMsg = errorMessage(err)
         // A fetch on an empty range can throw; that's normal
         if (!errMsg.includes('Nothing to fetch')) {
-          console.error(`[email] Poll error: ${errMsg}`)
+          log.error(TAG, `Poll error: ${errMsg}`)
         }
       } finally {
         lock.release()
@@ -154,7 +157,7 @@ const email: PlatformConnector = {
 
       // Filter by subject prefix if configured
       if (config.subjectPrefix && !subject.startsWith(config.subjectPrefix)) {
-        console.log(`[email] Skipping message from ${fromAddr} — subject "${subject}" doesn't match prefix "${config.subjectPrefix}"`)
+        log.info(TAG, `Skipping message from ${fromAddr} — subject "${subject}" doesn't match prefix "${config.subjectPrefix}"`)
         return
       }
 
@@ -166,11 +169,11 @@ const email: PlatformConnector = {
       }
 
       if (!bodyText.trim()) {
-        console.log(`[email] Skipping empty message from ${fromAddr}`)
+        log.info(TAG, `Skipping empty message from ${fromAddr}`)
         return
       }
 
-      console.log(`[email] New message from ${fromName} <${fromAddr}>: ${subject}`)
+      log.info(TAG, `New message from ${fromName} <${fromAddr}>: ${subject}`)
 
       // Use the sender's email as channelId
       const channelId = fromAddr
@@ -199,7 +202,7 @@ const email: PlatformConnector = {
         await sendReply(channelId, reply.visibleText)
       } catch (err: unknown) {
         const errMsg = errorMessage(err)
-        console.error(`[email] Error handling message from ${fromAddr}: ${errMsg}`)
+        log.error(TAG, `Error handling message from ${fromAddr}: ${errMsg}`)
       }
     }
 
@@ -222,7 +225,7 @@ const email: PlatformConnector = {
       }
 
       await smtp.sendMail(mailOptions)
-      console.log(`[email] Reply sent to ${to}`)
+      log.info(TAG, `Reply sent to ${to}`)
     }
 
     // Connect and start polling
@@ -231,11 +234,11 @@ const email: PlatformConnector = {
     pollTimer = setInterval(() => {
       pollForNewMessages().catch((err: unknown) => {
         const msg = errorMessage(err)
-        console.error(`[email] Poll interval error: ${msg}`)
+        log.error(TAG, `Poll interval error: ${msg}`)
       })
     }, pollMs)
 
-    console.log(`[email] Connector started — polling every ${config.pollIntervalSec || 60}s`)
+    log.info(TAG, `Connector started — polling every ${config.pollIntervalSec || 60}s`)
 
     return {
       connector,
@@ -259,7 +262,7 @@ const email: PlatformConnector = {
           // Connection may already be closed
         }
         connected = false
-        console.log(`[email] Connector stopped`)
+        log.info(TAG, `Connector stopped`)
       },
     }
   },

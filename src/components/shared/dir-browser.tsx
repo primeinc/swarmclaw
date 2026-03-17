@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { api } from '@/lib/app/api-client'
 import { SearchInput } from '@/components/ui/search-input'
 
@@ -37,26 +37,30 @@ export function DirBrowser({ value, file, onChange, onClear }: DirBrowserProps) 
   const [pathInput, setPathInput] = useState('')
   const [search, setSearch] = useState('')
 
-  const fetchDirs = useCallback(async (dirPath: string) => {
-    setLoading(true)
-    try {
-      const data = await api<DirApiResponse>('GET', `/dirs?path=${encodeURIComponent(dirPath)}`)
-      setDirs(data.dirs || [])
-      setCurrentPath(data.currentPath || dirPath)
-      setParentPath(data.parentPath || null)
-      setPathInput(data.currentPath || dirPath)
-    } catch {
-      setDirs([])
+  // Reset search and mark loading when navigating in browse mode
+  const [prevBrowsePath, setPrevBrowsePath] = useState(browsePath)
+  const [prevMode, setPrevMode] = useState(mode)
+  if (browsePath !== prevBrowsePath || mode !== prevMode) {
+    setPrevBrowsePath(browsePath)
+    setPrevMode(mode)
+    if (mode === 'browse') {
+      setSearch('')
+      setLoading(true)
     }
-    setLoading(false)
-  }, [])
+  }
 
   useEffect(() => {
-    if (mode === 'browse') {
-      fetchDirs(browsePath)
-      setSearch('')
-    }
-  }, [browsePath, mode, fetchDirs])
+    if (mode !== 'browse') return
+    api<DirApiResponse>('GET', `/dirs?path=${encodeURIComponent(browsePath)}`)
+      .then((data) => {
+        setDirs(data.dirs || [])
+        setCurrentPath(data.currentPath || browsePath)
+        setParentPath(data.parentPath || null)
+        setPathInput(data.currentPath || browsePath)
+      })
+      .catch(() => { setDirs([]) })
+      .finally(() => setLoading(false))
+  }, [browsePath, mode])
 
   const filteredDirs = useMemo(() => {
     if (!search) return dirs

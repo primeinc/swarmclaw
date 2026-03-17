@@ -1157,3 +1157,26 @@ export function pruneHeartbeatState(liveSessionIds: Set<string>): number {
   }
   return removed
 }
+
+/**
+ * Remove orchestrator tracking entries for agents that no longer exist.
+ * Called periodically by the daemon health sweep.
+ */
+export function pruneOrchestratorState(liveAgentIds: Set<string>): number {
+  let removed = 0
+  for (const agentId of orchestratorState.lastWakeByAgent.keys()) {
+    if (!liveAgentIds.has(agentId)) { orchestratorState.lastWakeByAgent.delete(agentId); removed++ }
+  }
+  for (const agentId of orchestratorState.failures.keys()) {
+    if (!liveAgentIds.has(agentId)) { orchestratorState.failures.delete(agentId); removed++ }
+  }
+  const todayStr = new Date().toISOString().slice(0, 10)
+  for (const key of orchestratorState.dailyCycles.keys()) {
+    const agentId = key.slice(0, key.lastIndexOf(':'))
+    if (!liveAgentIds.has(agentId) || key.slice(key.lastIndexOf(':') + 1) !== todayStr) {
+      orchestratorState.dailyCycles.delete(key)
+      removed++
+    }
+  }
+  return removed
+}

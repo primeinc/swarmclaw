@@ -731,6 +731,13 @@ const COMMAND_GROUPS = [
     ],
   },
   {
+    name: 'system-status',
+    description: 'Lightweight system health summary',
+    commands: [
+      cmd('get', 'GET', '/system/status', 'Get system health summary (safe for external monitors)'),
+    ],
+  },
+  {
     name: 'usage',
     description: 'Usage and cost summary',
     commands: [

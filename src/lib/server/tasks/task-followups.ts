@@ -7,6 +7,9 @@ import { WORKSPACE_DIR } from '@/lib/server/data-dir'
 import { loadConnectors, loadSessions, UPLOAD_DIR } from '@/lib/server/storage'
 import { errorMessage } from '@/lib/shared-utils'
 import { isMainSession } from '@/lib/server/agents/main-agent-loop'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'task-followups'
 
 export { normalizeWhatsappTarget }
 
@@ -507,7 +510,7 @@ export async function notifyConnectorTaskFollowups(params: {
       })
     } catch (err: unknown) {
       const errMsg = errorMessage(err)
-      console.warn(`[queue] Failed task follow-up send on connector ${target.connectorId}: ${errMsg}`)
+      log.warn(TAG, `Failed task follow-up send on connector ${target.connectorId}: ${errMsg}`)
     }
   }
 }

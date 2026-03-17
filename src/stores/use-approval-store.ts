@@ -76,7 +76,13 @@ export const useApprovalStore = create<ApprovalState>((set) => ({
       for (const [id, a] of Object.entries(s.approvals)) {
         if (a.expiresAtMs > now && !s.resolvedIds.has(id)) next[id] = a
       }
-      return { approvals: next }
+      // Prune resolvedIds for IDs no longer in the approval set
+      const liveIds = new Set(Object.keys(next))
+      const nextResolved = new Set<string>()
+      for (const id of s.resolvedIds) {
+        if (liveIds.has(id)) nextResolved.add(id)
+      }
+      return { approvals: next, resolvedIds: nextResolved }
     })
   },
 

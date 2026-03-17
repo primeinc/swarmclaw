@@ -1,4 +1,5 @@
-import { loadQueue, loadSchedules, loadSessions, loadConnectors, saveConnectors, loadWebhookRetryQueue, upsertWebhookRetry, deleteWebhookRetry, loadWebhooks, loadAgents, loadSettings, appendWebhookLog, loadCredentials, decryptKey, pruneExpiredLocks } from '@/lib/server/storage'
+import { log } from '@/lib/server/logger'
+import { loadQueue, loadSchedules, loadSessions, loadConnectors, saveConnectors, loadWebhookRetryQueue, upsertWebhookRetry, deleteWebhookRetry, loadWebhooks, loadAgents, loadSettings, appendWebhookLog, loadCredentials, decryptKey, pruneExpiredLocks, pruneOldUsage } from '@/lib/server/storage'
 import { notify } from '@/lib/server/ws-hub'
 import { processNext, cleanupFinishedTaskSessions, validateCompletedTasksQueue, recoverStalledRunningTasks, resumeQueue, promoteDeferred } from '@/lib/server/runtime/queue'
 import { startScheduler, stopScheduler } from '@/lib/server/runtime/scheduler'
@@ -19,7 +20,8 @@ import {
   setReconnectState,
 } from '@/lib/server/connectors/manager'
 import { startConnectorOutboxWorker, stopConnectorOutboxWorker } from '@/lib/server/connectors/outbox'
-import { startHeartbeatService, stopHeartbeatService, getHeartbeatServiceStatus, pruneHeartbeatState } from '@/lib/server/runtime/heartbeat-service'
+import { pruneConnectorTrackingState } from '@/lib/server/connectors/runtime-state'
+import { startHeartbeatService, stopHeartbeatService, getHeartbeatServiceStatus, pruneHeartbeatState, pruneOrchestratorState } from '@/lib/server/runtime/heartbeat-service'
 import { hasOpenClawAgents, ensureGatewayConnected, disconnectAutoGateways, getGateway } from '@/lib/server/openclaw/gateway'
 import { enqueueSessionRun, sweepStuckRuns } from '@/lib/server/runtime/session-run-manager'
 import { pruneOldRuns } from '@/lib/server/runtime/run-ledger'
@@ -37,6 +39,7 @@ import { runIntegrityMonitor } from '@/lib/server/integrity-monitor'
 import { notifyOrchestrators } from '@/lib/server/runtime/orchestrator-events'
 import { recoverStaleDelegationJobs } from '@/lib/server/agents/delegation-jobs'
 import { restoreSwarmRegistry } from '@/lib/server/agents/subagent-swarm'
+import { cleanupFinishedSubagents } from '@/lib/server/agents/subagent-runtime'
 import { pruneMainLoopState } from '@/lib/server/agents/main-agent-loop'
 import { pruneSystemEventQueues, pruneOrchestratorEventQueues } from '@/lib/server/runtime/system-events'
 import { checkSwarmTimeouts, ensureProtocolEngineRecovered } from '@/lib/server/protocols/protocol-service'
@@ -55,6 +58,9 @@ import {
 import { loadEstopState } from '@/lib/server/runtime/estop'
 import { classifyRuntimeFailure, recordSupervisorIncident } from '@/lib/server/autonomy/supervisor-reflection'
 import { getMemoryDb } from '@/lib/server/memory/memory-db'
+import { clearLogsByAge } from '@/lib/server/execution-log'
+
+const TAG = 'daemon-state'
 
 const QUEUE_CHECK_INTERVAL = 30_000 // 30 seconds
 const BROWSER_SWEEP_INTERVAL = 60_000 // 60 seconds
@@ -171,7 +177,7 @@ export function startDaemon(options?: { source?: string; manualStart?: boolean }
   const estop = loadEstopState()
   if (estop.level !== 'none') {
     notify('daemon')
-    console.warn(`[daemon] Start blocked by estop (level=${estop.level}, source=${source})`)
+    log.warn(TAG, `[daemon] Start blocked by estop (level=${estop.level}, source=${source})`)
     return
   }
 
@@ -188,7 +194,7 @@ export function startDaemon(options?: { source?: string; manualStart?: boolean }
   }
   ds.running = true
   notify('daemon')
-  console.log(`[daemon] Starting daemon (source=${source}, scheduler + queue processor + heartbeat)`)
+  log.info(TAG, `[daemon] Starting daemon (source=${source}, scheduler + queue processor + heartbeat)`)
 
   try {
     validateCompletedTasksQueue()
@@ -198,7 +204,7 @@ export function startDaemon(options?: { source?: string; manualStart?: boolean }
     restoreProviderHealthState()
     try {
       const lost = restoreSwarmRegistry()
-      if (lost > 0) console.log(`[daemon] Marked ${lost} in-flight swarm(s) as lost after restart`)
+      if (lost > 0) log.info(TAG, `[daemon] Marked ${lost} in-flight swarm(s) as lost after restart`)
     } catch { /* best-effort */ }
     resumeQueue()
     startScheduler()
@@ -211,14 +217,14 @@ export function startDaemon(options?: { source?: string; manualStart?: boolean }
   } catch (err: unknown) {
     ds.running = false
     notify('daemon')
-    console.error('[daemon] Failed to start:', errorMessage(err))
+    log.error(TAG, '[daemon] Failed to start:', errorMessage(err))
     throw err
   }
 
   if (isDaemonBackgroundServicesEnabled()) {
     // Auto-start enabled connectors only when the full background stack is enabled.
     autoStartConnectors().catch((err: unknown) => {
-      console.error('[daemon] Error auto-starting connectors:', errorMessage(err))
+      log.error(TAG, '[daemon] Error auto-starting connectors:', errorMessage(err))
     })
   }
 }
@@ -230,7 +236,7 @@ export async function stopDaemon(options?: { source?: string; manualStop?: boole
   ds.running = false
   ds.shuttingDown = true
   notify('daemon')
-  console.log(`[daemon] Stopping daemon (source=${source})`)
+  log.info(TAG, `[daemon] Stopping daemon (source=${source})`)
 
   stopScheduler()
   stopQueueProcessor()
@@ -250,7 +256,7 @@ export async function stopDaemon(options?: { source?: string; manualStop?: boole
       ),
     ])
   } catch (err: unknown) {
-    console.warn(`[daemon] Connector shutdown issue: ${errorMessage(err)}`)
+    log.warn(TAG, `[daemon] Connector shutdown issue: ${errorMessage(err)}`)
   } finally {
     ds.shuttingDown = false
   }
@@ -263,7 +269,7 @@ function startBrowserSweep() {
     if (count > 0) {
       const cleaned = sweepOrphanedBrowsers(BROWSER_MAX_AGE)
       if (cleaned > 0) {
-        console.log(`[daemon] Cleaned ${cleaned} orphaned browser(s), ${getActiveBrowserCount()} still active`)
+        log.info(TAG, `[daemon] Cleaned ${cleaned} orphaned browser(s), ${getActiveBrowserCount()} still active`)
       }
     }
   }, BROWSER_SWEEP_INTERVAL)
@@ -294,7 +300,7 @@ function startQueueProcessor() {
     if (!ds.running) return
     const queue = loadQueue()
     if (queue.length > 0) {
-      console.log(`[daemon] Processing ${queue.length} queued task(s)`)
+      log.info(TAG, `[daemon] Processing ${queue.length} queued task(s)`)
       try {
         await Promise.race([
           processNext(),
@@ -303,7 +309,7 @@ function startQueueProcessor() {
           ),
         ])
       } catch (err: unknown) {
-        console.error(`[daemon] Queue processing error/timeout: ${errorMessage(err)}`)
+        log.error(TAG, `[daemon] Queue processing error/timeout: ${errorMessage(err)}`)
       }
       ds.lastProcessedAt = Date.now()
     }
@@ -330,7 +336,7 @@ async function sendHealthAlert(input: string | {
 }) {
   const payload = typeof input === 'string' ? { text: input } : input
   const text = payload.text
-  console.warn(`[health] ${text}`)
+  log.warn(TAG, `[health] ${text}`)
   createNotification({
     type: 'warning',
     title: 'SwarmClaw health alert',
@@ -348,7 +354,7 @@ async function runConnectorHealthChecks(now: number) {
   try {
     await checkConnectorHealth()
   } catch (err: unknown) {
-    console.error('[health] Connector isAlive check failed:', errorMessage(err))
+    log.error(TAG, '[health] Connector isAlive check failed:', errorMessage(err))
   }
 
   const connectors = loadConnectors()
@@ -402,7 +408,7 @@ async function runConnectorHealthChecks(now: number) {
       })
       setReconnectState(connector.id, next)
       if (next.exhausted) {
-        console.warn(`[health] Connector "${connector.name}" exceeded ${MAX_WAKE_ATTEMPTS} auto-restart attempts — giving up until the server restarts or the user retries manually`)
+        log.warn(TAG, `[health] Connector "${connector.name}" exceeded ${MAX_WAKE_ATTEMPTS} auto-restart attempts — giving up until the server restarts or the user retries manually`)
         connector.status = 'error'
         connector.lastError = `Auto-restart gave up after ${MAX_WAKE_ATTEMPTS} attempts: ${message}`
         connector.updatedAt = Date.now()
@@ -419,7 +425,7 @@ async function runConnectorHealthChecks(now: number) {
           entityId: connector.id,
         })
       } else {
-        console.warn(`[health] Connector auto-restart failed for ${connector.name} (attempt ${next.attempts}/${MAX_WAKE_ATTEMPTS}): ${message}`)
+        log.warn(TAG, `[health] Connector auto-restart failed for ${connector.name} (attempt ${next.attempts}/${MAX_WAKE_ATTEMPTS}): ${message}`)
       }
     }
   }
@@ -461,13 +467,13 @@ async function processWebhookRetries() {
     if (!agent) {
       entry.deadLettered = true
       upsertWebhookRetry(entry.id, entry)
-      console.warn(`[webhook-retry] Dead-lettered ${entry.id}: agent not found for webhook ${entry.webhookId}`)
+      log.warn(TAG, `[webhook-retry] Dead-lettered ${entry.id}: agent not found for webhook ${entry.webhookId}`)
       continue
     }
     if (isAgentDisabled(agent)) {
       entry.deadLettered = true
       upsertWebhookRetry(entry.id, entry)
-      console.warn(`[webhook-retry] Dead-lettered ${entry.id}: agent disabled for webhook ${entry.webhookId}`)
+      log.warn(TAG, `[webhook-retry] Dead-lettered ${entry.id}: agent disabled for webhook ${entry.webhookId}`)
       continue
     }
 
@@ -547,7 +553,7 @@ async function processWebhookRetries() {
       })
 
       deleteWebhookRetry(entry.id)
-      console.log(`[webhook-retry] Successfully retried ${entry.id} for webhook ${entry.webhookId} (attempt ${entry.attempts})`)
+      log.info(TAG, `[webhook-retry] Successfully retried ${entry.id} for webhook ${entry.webhookId} (attempt ${entry.attempts})`)
     } catch (err: unknown) {
       const errorMsg = errorMessage(err)
       entry.attempts += 1
@@ -555,7 +561,7 @@ async function processWebhookRetries() {
       if (entry.attempts >= entry.maxAttempts) {
         entry.deadLettered = true
         upsertWebhookRetry(entry.id, entry)
-        console.warn(`[webhook-retry] Dead-lettered ${entry.id} after ${entry.attempts} attempts: ${errorMsg}`)
+        log.warn(TAG, `[webhook-retry] Dead-lettered ${entry.id} after ${entry.attempts} attempts: ${errorMsg}`)
         const failure = classifyRuntimeFailure({ source: 'webhook', message: errorMsg })
         if (session?.id) {
           recordSupervisorIncident({
@@ -589,7 +595,7 @@ async function processWebhookRetries() {
         const jitter = Math.floor(Math.random() * 5000)
         entry.nextRetryAt = Date.now() + (30_000 * Math.pow(2, entry.attempts)) + jitter
         upsertWebhookRetry(entry.id, entry)
-        console.warn(`[webhook-retry] Retry ${entry.id} failed (attempt ${entry.attempts}/${entry.maxAttempts}), next at ${new Date(entry.nextRetryAt).toISOString()}: ${errorMsg}`)
+        log.warn(TAG, `[webhook-retry] Retry ${entry.id} failed (attempt ${entry.attempts}/${entry.maxAttempts}), next at ${new Date(entry.nextRetryAt).toISOString()}: ${errorMsg}`)
       }
     }
   }
@@ -659,7 +665,7 @@ async function runProviderHealthChecks() {
           PROVIDER_PING_CB_MAX_MS,
         )
         existing.skipUntil = now + cooldown
-        console.log(`[health] Circuit breaker tripped for ${tuple.credentialName} — skipping pings for ${Math.round(cooldown / 60_000)}m`)
+        log.info(TAG, `[health] Circuit breaker tripped for ${tuple.credentialName} — skipping pings for ${Math.round(cooldown / 60_000)}m`)
       }
       ds.providerPingCircuitBreaker.set(cbKey, existing)
 
@@ -770,7 +776,7 @@ async function runOpenClawGatewayHealthChecks() {
         const { runOpenClawDoctor } = await import('@/lib/server/openclaw/doctor')
         await runOpenClawDoctor({ fix: true })
       } catch (err: unknown) {
-        console.warn('[daemon] openclaw doctor --fix failed:', errorMessage(err))
+        log.warn(TAG, '[daemon] openclaw doctor --fix failed:', errorMessage(err))
       }
       repair.attempts += 1
       repair.lastAttemptAt = now
@@ -806,12 +812,15 @@ function pruneOrphanedState(sessions: Record<string, unknown>): void {
   // System event queues for dead sessions
   pruneSystemEventQueues(liveSessionIds)
 
+  // Subagent lineage/handle registry — remove finished subagent state older than 30 min
+  cleanupFinishedSubagents()
+
   // Process manager — sweep completed processes older than TTL
   sweepManagedProcesses()
 
   // Reap orphaned sandbox containers from prior crashes
   reapOrphanedSandboxContainers().catch((err) => {
-    console.warn('[daemon] Orphaned sandbox reap failed:', typeof err === 'object' && err !== null && 'message' in err ? (err as Error).message : String(err))
+    log.warn(TAG, '[daemon] Orphaned sandbox reap failed:', typeof err === 'object' && err !== null && 'message' in err ? (err as Error).message : String(err))
   })
 
   // Daemon-local: prune openclawRepairState for agents that no longer exist
@@ -824,7 +833,15 @@ function pruneOrphanedState(sessions: Record<string, unknown>): void {
   }
 
   // Orchestrator event queues for dead agents
-  pruneOrchestratorEventQueues(new Set(Object.keys(agents)))
+  const liveAgentIds = new Set(Object.keys(agents))
+  pruneOrchestratorEventQueues(liveAgentIds)
+
+  // Orchestrator wake/failure/dailyCycles Maps for deleted agents
+  pruneOrchestratorState(liveAgentIds)
+
+  // Connector tracking Maps for deleted connectors
+  const connectors = loadConnectors()
+  pruneConnectorTrackingState(new Set(Object.keys(connectors)))
 
   // Prune circuit breaker entries for providers that no longer have any agent referencing them
   const liveProviderKeys = new Set<string>()
@@ -845,10 +862,10 @@ async function runMemoryMaintenanceTick(): Promise<void> {
     const memDb = getMemoryDb()
     const result = memDb.maintain({ dedupe: true, pruneWorking: true, ttlHours: 24 })
     if (result.deduped > 0 || result.pruned > 0) {
-      console.log(`[daemon] Memory maintenance: deduped=${result.deduped}, pruned=${result.pruned}`)
+      log.info(TAG, `[daemon] Memory maintenance: deduped=${result.deduped}, pruned=${result.pruned}`)
     }
   } catch (err: unknown) {
-    console.warn('[daemon] Memory maintenance tick failed:', err instanceof Error ? err.message : String(err))
+    log.warn(TAG, '[daemon] Memory maintenance tick failed:', err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -861,10 +878,10 @@ async function runHealthChecks() {
   try {
     const stuck = sweepStuckRuns()
     if (stuck.aborted > 0) {
-      console.log(`[daemon] Watchdog: aborted ${stuck.aborted} stuck run(s)`)
+      log.info(TAG, `[daemon] Watchdog: aborted ${stuck.aborted} stuck run(s)`)
     }
   } catch (err: unknown) {
-    console.error('[daemon] Stuck-run watchdog failed:', err instanceof Error ? err.message : String(err))
+    log.error(TAG, '[daemon] Stuck-run watchdog failed:', err instanceof Error ? err.message : String(err))
   }
 
   // Keep heartbeat state in sync with task terminal states even without daemon restarts.
@@ -945,14 +962,14 @@ async function runHealthChecks() {
   try {
     await runProviderHealthChecks()
   } catch (err: unknown) {
-    console.error('[daemon] Provider health check failed:', errorMessage(err))
+    log.error(TAG, '[daemon] Provider health check failed:', errorMessage(err))
   }
 
   // OpenClaw gateway health checks + auto-repair
   try {
     await runOpenClawGatewayHealthChecks()
   } catch (err: unknown) {
-    console.error('[daemon] OpenClaw gateway health check failed:', errorMessage(err))
+    log.error(TAG, '[daemon] OpenClaw gateway health check failed:', errorMessage(err))
   }
 
   // Integrity drift monitoring for identity/config/extension files.
@@ -981,55 +998,75 @@ async function runHealthChecks() {
       await sendHealthAlert(`Integrity monitor detected ${integrity.drifts.length} file drift event(s).`)
     }
   } catch (err: unknown) {
-    console.error('[daemon] Integrity monitor check failed:', errorMessage(err))
+    log.error(TAG, '[daemon] Integrity monitor check failed:', errorMessage(err))
   }
 
   // Process webhook retry queue
   try {
     await processWebhookRetries()
   } catch (err: unknown) {
-    console.error('[daemon] Webhook retry processing failed:', errorMessage(err))
+    log.error(TAG, '[daemon] Webhook retry processing failed:', errorMessage(err))
   }
 
   // Periodic memory hygiene: prune orphaned state for deleted sessions/connectors
   try {
     pruneOrphanedState(sessions)
   } catch (err: unknown) {
-    console.error('[daemon] Memory hygiene sweep failed:', errorMessage(err))
+    log.error(TAG, '[daemon] Memory hygiene sweep failed:', errorMessage(err))
   }
 
   // Prune old terminal runs and their events to prevent unbounded growth
   try {
     const pruned = pruneOldRuns()
     if (pruned.prunedRuns > 0 || pruned.prunedEvents > 0) {
-      console.log(`[daemon] Pruned ${pruned.prunedRuns} old run(s) and ${pruned.prunedEvents} run event(s)`)
+      log.info(TAG, `[daemon] Pruned ${pruned.prunedRuns} old run(s) and ${pruned.prunedEvents} run event(s)`)
     }
   } catch (err: unknown) {
-    console.error('[daemon] Run pruning failed:', err instanceof Error ? err.message : String(err))
+    log.error(TAG, '[daemon] Run pruning failed:', err instanceof Error ? err.message : String(err))
   }
 
   // Prune expired runtime locks
   try {
     const locksRemoved = pruneExpiredLocks()
     if (locksRemoved > 0) {
-      console.log(`[daemon] Pruned ${locksRemoved} expired lock(s)`)
+      log.info(TAG, `[daemon] Pruned ${locksRemoved} expired lock(s)`)
     }
   } catch (err: unknown) {
-    console.error('[daemon] Lock pruning failed:', err instanceof Error ? err.message : String(err))
+    log.error(TAG, '[daemon] Lock pruning failed:', err instanceof Error ? err.message : String(err))
+  }
+
+  // Prune old execution logs (30-day retention)
+  try {
+    const logsRemoved = clearLogsByAge(30 * 24 * 3600_000)
+    if (logsRemoved > 0) {
+      log.info(TAG, `[daemon] Pruned ${logsRemoved} old execution log(s)`)
+    }
+  } catch (err: unknown) {
+    log.error(TAG, '[daemon] Execution log pruning failed:', errorMessage(err))
+  }
+
+  // Prune old usage records (90-day retention)
+  try {
+    const usageRemoved = pruneOldUsage(90 * 24 * 3600_000)
+    if (usageRemoved > 0) {
+      log.info(TAG, `[daemon] Pruned ${usageRemoved} old usage record(s)`)
+    }
+  } catch (err: unknown) {
+    log.error(TAG, '[daemon] Usage pruning failed:', errorMessage(err))
   }
 
   // Periodic memory database maintenance (dedup + TTL pruning)
   try {
     await runMemoryMaintenanceTick()
   } catch (err: unknown) {
-    console.error('[daemon] Memory maintenance failed:', err instanceof Error ? err.message : String(err))
+    log.error(TAG, '[daemon] Memory maintenance failed:', err instanceof Error ? err.message : String(err))
   }
 
   // Drain idle-window callbacks when the system is quiet
   try {
     await drainIdleWindowCallbacks()
   } catch (err: unknown) {
-    console.error('[daemon] Idle-window drain failed:', err instanceof Error ? err.message : String(err))
+    log.error(TAG, '[daemon] Idle-window drain failed:', err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -1040,7 +1077,7 @@ function startHealthMonitor() {
     ds.healthCheckRunning = true
     runHealthChecks()
       .catch((err) => {
-        console.error('[daemon] Health monitor tick failed:', err?.message || String(err))
+        log.error(TAG, '[daemon] Health monitor tick failed:', err?.message || String(err))
       })
       .finally(() => { ds.healthCheckRunning = false })
   }, HEALTH_CHECK_INTERVAL)
@@ -1077,7 +1114,7 @@ function startConnectorHealthMonitor(options?: { runImmediately?: boolean }) {
     ds.connectorHealthCheckRunning = true
     runConnectorHealthChecks(Date.now())
       .catch((err) => {
-        console.error('[daemon] Connector health tick failed:', errorMessage(err))
+        log.error(TAG, '[daemon] Connector health tick failed:', errorMessage(err))
       })
       .finally(() => { ds.connectorHealthCheckRunning = false })
   }
@@ -1101,14 +1138,14 @@ function runConsolidationTick() {
 
     return runDailyConsolidation().then((stats) => {
       if (stats.digests > 0 || stats.pruned > 0 || stats.deduped > 0) {
-        console.log(`[daemon] Memory consolidation: ${stats.digests} digest(s), ${stats.pruned} pruned, ${stats.deduped} deduped`)
+        log.info(TAG, `[daemon] Memory consolidation: ${stats.digests} digest(s), ${stats.pruned} pruned, ${stats.deduped} deduped`)
       }
       if (stats.errors.length > 0) {
-        console.warn(`[daemon] Memory consolidation errors: ${stats.errors.join('; ')}`)
+        log.warn(TAG, `[daemon] Memory consolidation errors: ${stats.errors.join('; ')}`)
       }
     })
   }).catch((err: unknown) => {
-    console.error('[daemon] Memory consolidation failed:', errorMessage(err))
+    log.error(TAG, '[daemon] Memory consolidation failed:', errorMessage(err))
   })
 }
 
@@ -1151,7 +1188,7 @@ async function runEvalSchedulerTick() {
     for (const agentId of heartbeatAgentIds) {
       try {
         const result = await runEvalSuite(agentId)
-        console.log(
+        log.info(TAG,
           `[daemon:eval] Agent ${agents[agentId].name}: ${result.percentage}% (${result.totalScore}/${result.maxScore})`,
         )
         createNotification({
@@ -1160,11 +1197,11 @@ async function runEvalSchedulerTick() {
           type: result.percentage >= 60 ? 'info' : 'warning',
         })
       } catch (err: unknown) {
-        console.error(`[daemon:eval] Failed for agent ${agentId}:`, errorMessage(err))
+        log.error(TAG, `[daemon:eval] Failed for agent ${agentId}:`, errorMessage(err))
       }
     }
   } catch (err: unknown) {
-    console.error('[daemon:eval] Scheduler tick error:', errorMessage(err))
+    log.error(TAG, '[daemon:eval] Scheduler tick error:', errorMessage(err))
   }
 }
 
@@ -1175,7 +1212,7 @@ function startEvalScheduler() {
     if (!settings.autonomyEvalEnabled) return
     const intervalMs = parseCronToMs(settings.autonomyEvalCron, EVAL_DEFAULT_INTERVAL_MS) || EVAL_DEFAULT_INTERVAL_MS
     ds.evalSchedulerIntervalId = setInterval(runEvalSchedulerTick, intervalMs)
-    console.log(`[daemon:eval] Eval scheduler started (interval=${Math.round(intervalMs / 3600_000)}h)`)
+    log.info(TAG, `[daemon:eval] Eval scheduler started (interval=${Math.round(intervalMs / 3600_000)}h)`)
   } catch {
     // Eval scheduling is optional — don't block daemon start
   }
@@ -1197,7 +1234,7 @@ function startSwarmTimeoutChecker() {
     try {
       checkSwarmTimeouts()
     } catch (err: unknown) {
-      console.error(`[daemon] Swarm timeout check error: ${errorMessage(err)}`)
+      log.error(TAG, `[daemon] Swarm timeout check error: ${errorMessage(err)}`)
     }
   }, SWARM_TIMEOUT_CHECK_INTERVAL)
 }
@@ -1327,5 +1364,107 @@ export function getDaemonStatus() {
       shuttingDown: ds.shuttingDown,
       providerCircuitBreakers: ds.providerPingCircuitBreaker.size,
     },
+  }
+}
+
+/**
+ * Lightweight health summary safe for external consumption.
+ * Reads cached state only — no probes or side effects.
+ */
+export function getDaemonHealthSummary(): {
+  ok: boolean
+  uptime: number
+  components: {
+    daemon: { status: 'healthy' | 'stopped' | 'degraded' }
+    connectors: { healthy: number; errored: number; total: number }
+    providers: { healthy: number; cooldown: number; total: number }
+    gateways: { healthy: number; degraded: number; total: number }
+  }
+  estop: boolean
+  nextScheduledTask: number | null
+} {
+  const estopState = loadEstopState()
+  const estopActive = estopState.level !== 'none'
+
+  // Daemon status
+  const daemonStatus: 'healthy' | 'stopped' | 'degraded' = !ds.running
+    ? 'stopped'
+    : estopActive ? 'degraded' : 'healthy'
+
+  // Connector summary
+  const connectors = loadConnectors()
+  const connectorEntries = Object.values(connectors) as unknown as Record<string, unknown>[]
+  const enabledConnectors = connectorEntries.filter(c => c?.isEnabled === true)
+  let healthyConnectors = 0
+  let erroredConnectors = 0
+  for (const c of enabledConnectors) {
+    if (typeof c.id === 'string' && getConnectorStatus(c.id) === 'running') {
+      healthyConnectors++
+    } else {
+      erroredConnectors++
+    }
+  }
+
+  // Provider summary (based on circuit breaker state)
+  const agents = loadAgents()
+  const agentEntries = Object.values(agents) as unknown as Record<string, unknown>[]
+  const providerKeys = new Set<string>()
+  for (const agent of agentEntries) {
+    if (!agent?.id || typeof agent.id !== 'string') continue
+    const provider = typeof agent.provider === 'string' ? agent.provider : ''
+    if (!provider || ['claude-cli', 'codex-cli', 'opencode-cli'].includes(provider)) continue
+    const credentialId = typeof agent.credentialId === 'string' ? agent.credentialId : ''
+    const apiEndpoint = typeof agent.apiEndpoint === 'string' ? agent.apiEndpoint : ''
+    providerKeys.add(`${provider}:${credentialId || 'no-cred'}:${apiEndpoint}`)
+  }
+  const now = Date.now()
+  let cooldownProviders = 0
+  for (const key of providerKeys) {
+    const cb = ds.providerPingCircuitBreaker.get(key)
+    if (cb && cb.skipUntil > now) cooldownProviders++
+  }
+
+  // Gateway summary (OpenClaw gateways)
+  const totalGateways = ds.openclawDownAgentIds.size
+    + agentEntries.filter(a => a?.provider === 'openclaw' && !ds.openclawDownAgentIds.has(a.id as string)).length
+  const degradedGateways = ds.openclawDownAgentIds.size
+
+  // Next scheduled task
+  const schedules = loadSchedules()
+  let nextScheduled: number | null = null
+  for (const s of Object.values(schedules) as unknown as Record<string, unknown>[]) {
+    if (s.status === 'active' && s.nextRunAt) {
+      if (!nextScheduled || (s.nextRunAt as number) < nextScheduled) {
+        nextScheduled = s.nextRunAt as number
+      }
+    }
+  }
+
+  const allProvidersDown = providerKeys.size > 0 && cooldownProviders >= providerKeys.size
+  const ok = ds.running && !estopActive && !allProvidersDown
+
+  return {
+    ok,
+    uptime: Math.trunc(process.uptime()),
+    components: {
+      daemon: { status: daemonStatus },
+      connectors: {
+        healthy: healthyConnectors,
+        errored: erroredConnectors,
+        total: enabledConnectors.length,
+      },
+      providers: {
+        healthy: providerKeys.size - cooldownProviders,
+        cooldown: cooldownProviders,
+        total: providerKeys.size,
+      },
+      gateways: {
+        healthy: totalGateways - degradedGateways,
+        degraded: degradedGateways,
+        total: totalGateways,
+      },
+    },
+    estop: estopActive,
+    nextScheduledTask: nextScheduled,
   }
 }

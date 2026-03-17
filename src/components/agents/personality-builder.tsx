@@ -1,8 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { PersonalityDraft } from '@/types'
-import { api } from '@/lib/app/api-client'
 import {
   parseIdentityMd, serializeIdentityMd,
   parseUserMd, serializeUserMd,
@@ -19,12 +18,12 @@ interface Props {
 const inputClass = 'w-full px-3 py-2 rounded-[10px] border border-white/[0.06] bg-black/20 text-[13px] text-text outline-none placeholder:text-text-3/40 focus:border-white/[0.12] transition-colors'
 const labelClass = 'block text-[11px] font-600 uppercase tracking-wider text-text-3/50 mb-1'
 
-export function PersonalityBuilder({ agentId: _agentId, fileType, content, onSave }: Props) {
+export function PersonalityBuilder({ fileType, content, onSave }: Props) {
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [initialDraft, setInitialDraft] = useState<Record<string, string>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
 
-  useEffect(() => {
+  const parsedContent = useMemo(() => {
     let parsed: Record<string, string> = {}
     if (fileType === 'IDENTITY.md') {
       const p = parseIdentityMd(content)
@@ -36,10 +35,17 @@ export function PersonalityBuilder({ agentId: _agentId, fileType, content, onSav
       const p = parseSoulMd(content)
       parsed = { coreTruths: p.coreTruths || '', boundaries: p.boundaries || '', vibe: p.vibe || '', continuity: p.continuity || '' }
     }
-    setDraft(parsed)
-    setInitialDraft(parsed)
-    setSaveState('idle')
+    return parsed
   }, [content, fileType])
+
+  // Reset form when content/fileType changes (render-time state adjustment)
+  const [syncKey, setSyncKey] = useState({ content, fileType })
+  if (content !== syncKey.content || fileType !== syncKey.fileType) {
+    setSyncKey({ content, fileType })
+    setDraft(parsedContent)
+    setInitialDraft(parsedContent)
+    setSaveState('idle')
+  }
 
   const isDirty = useMemo(() => {
     return Object.keys(draft).some((k) => draft[k] !== (initialDraft[k] ?? ''))

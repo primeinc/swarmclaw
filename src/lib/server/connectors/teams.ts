@@ -1,5 +1,8 @@
+import { log } from '@/lib/server/logger'
 import type { PlatformConnector, ConnectorInstance, InboundMessage } from './types'
 import { resolveConnectorIngressReply } from './ingress-delivery'
+
+const TAG = 'teams'
 
 const teams: PlatformConnector = {
   async start(connector, botToken, onMessage): Promise<ConnectorInstance> {
@@ -15,7 +18,7 @@ const teams: PlatformConnector = {
     })
 
     adapter.onTurnError = async (_context: unknown, error: Error) => {
-      console.error(`[teams] Turn error:`, error.message)
+      log.error(TAG, 'Turn error:', error.message)
     }
 
     // Store conversation references for proactive messaging
@@ -49,7 +52,7 @@ const teams: PlatformConnector = {
           if (!reply) return
           await context.sendActivity(reply.visibleText)
         } catch (err: any) {
-          console.error(`[teams] Error handling message:`, err.message)
+          log.error(TAG, 'Error handling message:', err.message)
           try {
             await context.sendActivity('Sorry, I encountered an error processing your message.')
           } catch { /* ignore */ }
@@ -61,8 +64,8 @@ const teams: PlatformConnector = {
     const handlerKey = `__swarmclaw_teams_handler_${connector.id}__`
     ;(globalThis as any)[handlerKey] = processActivity
 
-    console.log(`[teams] Bot registered (appId: ${appId})`)
-    console.log(`[teams] Configure your bot's messaging endpoint to POST to /api/connectors/${connector.id}/webhook`)
+    log.info(TAG, `Bot registered (appId: ${appId})`)
+    log.info(TAG, `Configure your bot's messaging endpoint to POST to /api/connectors/${connector.id}/webhook`)
 
     return {
       connector,
@@ -85,7 +88,7 @@ const teams: PlatformConnector = {
         stopped = true
         delete (globalThis as any)[handlerKey]
         conversationReferences.clear()
-        console.log(`[teams] Bot disconnected`)
+        log.info(TAG, 'Bot disconnected')
       },
     }
   },

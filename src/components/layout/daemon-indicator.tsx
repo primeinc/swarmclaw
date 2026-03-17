@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/app/api-client'
 import { useWs } from '@/hooks/use-ws'
 import { StatusDot } from '@/components/ui/status-dot'
@@ -16,14 +16,13 @@ interface DaemonStatus {
 export function DaemonIndicator() {
   const [status, setStatus] = useState<DaemonStatus | null>(null)
 
-  const fetchStatus = async () => {
-    try {
-      const data = await api<DaemonStatus>('GET', '/daemon')
-      setStatus(data)
-    } catch { /* ignore */ }
-  }
+  const fetchStatus = useCallback(() => {
+    api<DaemonStatus>('GET', '/daemon')
+      .then(setStatus)
+      .catch(() => {})
+  }, [])
 
-  useEffect(() => { fetchStatus() }, [])
+  useEffect(() => { fetchStatus() }, [fetchStatus])
   useWs('daemon', fetchStatus, 60_000)
 
   const toggle = async () => {

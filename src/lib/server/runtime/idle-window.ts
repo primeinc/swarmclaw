@@ -1,5 +1,8 @@
 import { loadSessions } from '@/lib/server/storage'
 import type { Session } from '@/types'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'idle-window'
 
 const DEFAULT_IDLE_THRESHOLD_MS = 120_000 // 2 minutes
 const DAILY_GUARANTEE_MS = 24 * 60 * 60 * 1000
@@ -73,7 +76,7 @@ export async function drainIdleWindowCallbacks(): Promise<void> {
     try {
       await cb()
     } catch (err) {
-      console.warn('[idle-window] Callback failed:', err instanceof Error ? err.message : String(err))
+      log.warn(TAG, 'Callback failed:', err instanceof Error ? err.message : String(err))
     }
   }
 }

@@ -66,4 +66,23 @@ export const connectorRuntimeState = getConnectorRuntimeState()
 
 export const runningConnectors = connectorRuntimeState.running
 
+/**
+ * Remove tracking entries for connectors that no longer exist in storage.
+ * Called periodically by the daemon health sweep.
+ */
+export function pruneConnectorTrackingState(liveConnectorIds: Set<string>): number {
+  const st = getConnectorRuntimeState()
+  let removed = 0
+  for (const id of st.lastInboundChannelByConnector.keys()) {
+    if (!liveConnectorIds.has(id)) { st.lastInboundChannelByConnector.delete(id); removed++ }
+  }
+  for (const id of st.lastInboundTimeByConnector.keys()) {
+    if (!liveConnectorIds.has(id)) { st.lastInboundTimeByConnector.delete(id); removed++ }
+  }
+  for (const id of st.generationCounter.keys()) {
+    if (!liveConnectorIds.has(id)) { st.generationCounter.delete(id); removed++ }
+  }
+  return removed
+}
+
 export type ConnectorThreadSession = Session

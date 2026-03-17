@@ -2,6 +2,9 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { IncomingMessage } from 'http'
 import { validateAccessKey } from './storage'
 import { AUTH_COOKIE_NAME, getCookieValue } from '@/lib/auth'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'ws-hub'
 
 interface WsClient {
   ws: WebSocket
@@ -67,10 +70,10 @@ export function initWsServer() {
   })
 
   wss.on('error', (err) => {
-    console.error('[ws-hub] WebSocket server error:', err.message)
+    log.error(TAG, 'WebSocket server error:', err.message)
   })
 
-  console.log(`[ws-hub] WebSocket server listening on port ${port}`)
+  log.info(TAG, `WebSocket server listening on port ${port}`)
 }
 
 export function closeWsServer(): Promise<void> {

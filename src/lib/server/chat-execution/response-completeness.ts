@@ -9,6 +9,9 @@ import crypto from 'node:crypto'
 import { HumanMessage } from '@langchain/core/messages'
 import { z } from 'zod'
 import { buildLLM } from '@/lib/server/build-llm'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'response-completeness'
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -191,7 +194,7 @@ export async function evaluateResponseCompleteness(
     ])
 
     const durationMs = Date.now() - startMs
-    console.log(`[response-completeness] session=${input.sessionId} completed in ${durationMs}ms`)
+    log.info(TAG, `session=${input.sessionId} completed in ${durationMs}ms`)
 
     const completeness = parseCompletenessResponse(responseText)
     if (completeness) {
@@ -200,7 +203,7 @@ export async function evaluateResponseCompleteness(
     return completeness
   } catch (err: unknown) {
     const durationMs = Date.now() - startMs
-    console.warn(`[response-completeness] session=${input.sessionId} failed in ${durationMs}ms: ${err instanceof Error ? err.message : 'unknown'}`)
+    log.warn(TAG, `session=${input.sessionId} failed in ${durationMs}ms: ${err instanceof Error ? err.message : 'unknown'}`)
     return null
   }
 }

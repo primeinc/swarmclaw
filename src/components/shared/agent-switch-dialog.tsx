@@ -31,13 +31,19 @@ export function AgentSwitchDialog() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  // Reset on open
+  // Reset on open (render-time state adjustment)
+  const [prevOpen, setPrevOpen] = useState(false)
+  if (open && !prevOpen) {
+    setQuery('')
+    setSelectedIdx(0)
+  }
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+  }
+
+  // Focus input after opening
   useEffect(() => {
-    if (open) {
-      setQuery('')
-      setSelectedIdx(0)
-      setTimeout(() => inputRef.current?.focus(), 50)
-    }
+    if (open) setTimeout(() => inputRef.current?.focus(), 50)
   }, [open])
 
   const filtered = useMemo(() => {

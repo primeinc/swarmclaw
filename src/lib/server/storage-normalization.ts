@@ -526,5 +526,9 @@ function normalizeStoredRecordInner(
   if ('missionSummary' in session) delete session.missionSummary
   // Default geminiSessionId for new field
   if (session.geminiSessionId === undefined) session.geminiSessionId = null
+  // Default injectedMemoryIds for proactive recall dedup
+  if (!session.injectedMemoryIds || typeof session.injectedMemoryIds !== 'object') {
+    session.injectedMemoryIds = {}
+  }
   return session
 }

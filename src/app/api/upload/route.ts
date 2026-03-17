@@ -3,6 +3,9 @@ import fs from 'fs'
 import path from 'path'
 import { genId } from '@/lib/id'
 import { UPLOAD_DIR } from '@/lib/server/storage'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'api-upload'
 
 export async function POST(req: Request) {
   const filename = req.headers.get('x-filename') || 'image.png'
@@ -12,7 +15,7 @@ export async function POST(req: Request) {
 
   if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true })
   fs.writeFileSync(filePath, buf)
-  console.log(`[upload] saved ${buf.length} bytes to ${filePath}`)
+  log.info(TAG, `saved ${buf.length} bytes to ${filePath}`)
 
   return NextResponse.json({ path: filePath, size: buf.length, url: `/api/uploads/${name}` })
 }

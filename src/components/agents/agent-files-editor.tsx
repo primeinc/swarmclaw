@@ -1,12 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/app/api-client'
 import { errorMessage } from '@/lib/shared-utils'
 import { PersonalityBuilder } from './personality-builder'
 
 const FILES = ['SOUL.md', 'IDENTITY.md', 'USER.md', 'TOOLS.md', 'HEARTBEAT.md', 'MEMORY.md', 'AGENTS.md'] as const
 const GUIDED_FILES = new Set(['SOUL.md', 'IDENTITY.md', 'USER.md'])
+
+function makeInitialFiles(): Record<string, FileState> {
+  const initial: Record<string, FileState> = {}
+  for (const f of FILES) {
+    initial[f] = { content: '', original: '', loading: true, saving: false }
+  }
+  return initial
+}
 
 interface FileState {
   content: string
@@ -22,44 +30,48 @@ interface Props {
 
 export function AgentFilesEditor({ agentId }: Props) {
   const [activeTab, setActiveTab] = useState<string>(FILES[0])
-  const [files, setFiles] = useState<Record<string, FileState>>({})
+  const [files, setFiles] = useState<Record<string, FileState>>(makeInitialFiles)
   const [guidedMode, setGuidedMode] = useState(false)
 
-  const loadFiles = useCallback(async () => {
-    const initial: Record<string, FileState> = {}
-    for (const f of FILES) {
-      initial[f] = { content: '', original: '', loading: true, saving: false }
-    }
-    setFiles(initial)
+  // Reset to loading state when agentId changes
+  const [prevAgentId, setPrevAgentId] = useState(agentId)
+  if (agentId !== prevAgentId) {
+    setPrevAgentId(agentId)
+    setFiles(makeInitialFiles())
+  }
 
-    try {
-      const result = await api<Record<string, { content: string; error?: string }>>('GET', `/openclaw/agent-files?agentId=${agentId}`)
-      setFiles((prev) => {
-        const next = { ...prev }
-        for (const [name, data] of Object.entries(result)) {
-          next[name] = {
-            content: data.content,
-            original: data.content,
-            loading: false,
-            saving: false,
-            error: data.error,
+  useEffect(() => {
+    let cancelled = false
+    api<Record<string, { content: string; error?: string }>>('GET', `/openclaw/agent-files?agentId=${agentId}`)
+      .then((result) => {
+        if (cancelled) return
+        setFiles((prev) => {
+          const next = { ...prev }
+          for (const [name, data] of Object.entries(result)) {
+            next[name] = {
+              content: data.content,
+              original: data.content,
+              loading: false,
+              saving: false,
+              error: data.error,
+            }
           }
-        }
-        return next
+          return next
+        })
       })
-    } catch (err: unknown) {
-      const message = errorMessage(err)
-      setFiles((prev) => {
-        const next = { ...prev }
-        for (const f of FILES) {
-          next[f] = { ...next[f], loading: false, error: message }
-        }
-        return next
+      .catch((err: unknown) => {
+        if (cancelled) return
+        const message = errorMessage(err)
+        setFiles((prev) => {
+          const next = { ...prev }
+          for (const f of FILES) {
+            next[f] = { ...next[f], loading: false, error: message }
+          }
+          return next
+        })
       })
-    }
+    return () => { cancelled = true }
   }, [agentId])
-
-  useEffect(() => { loadFiles() }, [loadFiles])
 
   const handleContentChange = (filename: string, content: string) => {
     setFiles((prev) => ({

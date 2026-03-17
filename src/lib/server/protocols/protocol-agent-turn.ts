@@ -4,7 +4,10 @@
  */
 import { HumanMessage } from '@langchain/core/messages'
 import { z } from 'zod'
+import { log } from '@/lib/server/logger'
 import { genId } from '@/lib/id'
+
+const TAG = 'protocol-agent-turn'
 import type {
   Agent,
   Chatroom,
@@ -230,7 +233,7 @@ export async function defaultExecuteAgentTurn(params: {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
       const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1)
-      console.warn(`[protocols] retrying agent turn for ${params.agentId} (attempt ${attempt + 1}/${MAX_RETRIES + 1}, waiting ${delay}ms)`)
+      log.warn(TAG, `retrying agent turn for ${params.agentId} (attempt ${attempt + 1}/${MAX_RETRIES + 1}, waiting ${delay}ms)`)
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
     try {
@@ -271,7 +274,7 @@ export async function defaultExecuteAgentTurn(params: {
       const msg = errorMessage(err)
       const isRetryable = /\b(401|429|5\d{2}|timeout|ECONNR|ETIMEDOUT|ENOTFOUND|socket hang up|fetch failed)\b/i.test(msg)
       if (!isRetryable || attempt >= MAX_RETRIES) throw err
-      console.warn(`[protocols] transient LLM error for agent ${params.agentId}: ${msg}`)
+      log.warn(TAG, `transient LLM error for agent ${params.agentId}: ${msg}`)
     }
   }
   throw lastError

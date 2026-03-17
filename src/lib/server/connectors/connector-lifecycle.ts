@@ -1,3 +1,4 @@
+import { log } from '@/lib/server/logger'
 import { genId } from '@/lib/id'
 import {
   loadConnectors, saveConnectors,
@@ -18,6 +19,8 @@ import {
   setReconnectState,
 } from './reconnect-state'
 import { connectorRuntimeState, runningConnectors } from './runtime-state'
+
+const TAG = 'connector-lifecycle'
 
 const running = runningConnectors
 const {
@@ -91,7 +94,7 @@ export async function getPlatform(platform: string) {
       }
     }
   } catch (err: unknown) {
-    console.warn(`[connector] Failed to check extensions for platform "${platform}":`, errorMessage(err))
+    log.warn(TAG, `Failed to check extensions for platform "${platform}":`, errorMessage(err))
   }
 
   throw new Error(`Unknown platform: ${platform}`)
@@ -184,7 +187,7 @@ async function _startConnectorImpl(connectorId: string): Promise<void> {
     const typedInstance = instance as ConnectorInstance
     if (!typedInstance.onCrash) {
       typedInstance.onCrash = (error: string) => {
-        console.warn(`[connector] onCrash fired for "${connector.name}" (${connectorId}): ${error}`)
+        log.warn(TAG, `onCrash fired for "${connector.name}" (${connectorId}): ${error}`)
         running.delete(connectorId)
         recordHealthEvent(connectorId, 'disconnected', `Crash callback: ${error}`)
 
@@ -217,7 +220,7 @@ async function _startConnectorImpl(connectorId: string): Promise<void> {
     clearReconnectState(connectorId)
     notify('connectors')
 
-    console.log(`[connector] Started ${connector.platform} connector: ${connector.name}`)
+    log.info(TAG, `Started ${connector.platform} connector: ${connector.name}`)
     logActivity({ entityType: 'connector', entityId: connectorId, action: 'started', actor: 'system', summary: `Connector "${connector.name}" (${connector.platform}) started` })
     recordHealthEvent(connectorId, 'started', `${connector.platform} connector "${connector.name}" started`)
   } catch (err: unknown) {
@@ -277,7 +280,7 @@ export async function stopConnector(
     notify('connectors')
   }
 
-  console.log(`[connector] Stopped connector: ${connectorId}`)
+  log.info(TAG, `Stopped connector: ${connectorId}`)
   logActivity({ entityType: 'connector', entityId: connectorId, action: 'stopped', actor: 'system', summary: `Connector stopped` })
   recordHealthEvent(connectorId, 'stopped', `Connector stopped`)
 }
@@ -340,10 +343,10 @@ export async function autoStartConnectors(): Promise<void> {
   for (const connector of Object.values(connectors) as Connector[]) {
     if (connector.isEnabled && !running.has(connector.id)) {
       try {
-        console.log(`[connector] Auto-starting ${connector.platform} connector: ${connector.name}`)
+        log.info(TAG, `Auto-starting ${connector.platform} connector: ${connector.name}`)
         await startConnector(connector.id)
       } catch (err: unknown) {
-        console.error(`[connector] Failed to auto-start ${connector.name}:`, err instanceof Error ? err.message : err)
+        log.error(TAG, `Failed to auto-start ${connector.name}:`, err instanceof Error ? err.message : err)
       }
     }
   }
@@ -434,14 +437,14 @@ export async function checkConnectorHealth(): Promise<void> {
     if (instance.isAlive()) {
       // Connector is healthy — clear any reconnect state
       if (connectorReconnectStateStore.has(id)) {
-        console.log(`[connector-health] Connector "${instance.connector.name}" recovered`)
+        log.info(TAG, `Connector "${instance.connector.name}" recovered`)
         clearReconnectState(id)
       }
       continue
     }
 
     // Connector is dead but still in the running Map
-    console.warn(`[connector-health] Connector "${instance.connector.name}" (${id}) isAlive=false — removing from running`)
+    log.warn(TAG, `Connector "${instance.connector.name}" (${id}) isAlive=false — removing from running`)
     recordHealthEvent(id, 'disconnected', `Connector "${instance.connector.name}" detected as dead (isAlive=false)`)
     notifyOrchestrators(`Connector ${instance.connector.name || id} status: disconnected`, `connector-status:${id}`)
 

@@ -106,6 +106,8 @@ export function buildCliEnv(opts?: {
     }
   }
 
+  delete (env as Record<string, unknown>).MallocStackLogging
+
   if (opts?.inject) {
     for (const [key, value] of Object.entries(opts.inject)) {
       env[key] = value
@@ -113,6 +115,19 @@ export function buildCliEnv(opts?: {
   }
 
   return env
+}
+
+// ---------------------------------------------------------------------------
+// Stderr Noise Filter
+// ---------------------------------------------------------------------------
+
+const STDERR_NOISE_PATTERNS: RegExp[] = [
+  /MallocStackLogging/,
+  /^\s*$/,
+]
+
+export function isStderrNoise(text: string): boolean {
+  return STDERR_NOISE_PATTERNS.some((re) => re.test(text))
 }
 
 // ---------------------------------------------------------------------------

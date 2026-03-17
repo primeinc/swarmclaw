@@ -39,6 +39,9 @@ import {
   simulateSolanaTransaction,
 } from '../solana'
 import { TOOL_CAPABILITY } from '../tool-planning'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'wallet'
 import { clearWalletPortfolioCache } from '@/lib/server/wallet/wallet-portfolio'
 import {
   createAgentWallet,
@@ -1042,7 +1045,7 @@ async function executeWalletAction(args: unknown, context: { agentId?: string | 
   } catch (err: unknown) {
     const msg = errorMessage(err)
     if (msg.includes('429') || msg.toLowerCase().includes('too many requests')) {
-      console.warn('[wallet] Solana RPC rate-limited. Consider using a dedicated RPC endpoint (SOLANA_RPC_URL env var).')
+      log.warn(TAG, 'Solana RPC rate-limited. Consider using a dedicated RPC endpoint (SOLANA_RPC_URL env var).')
     }
     return JSON.stringify({ error: msg })
   }

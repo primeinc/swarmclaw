@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import type { StreamChatOptions } from './index'
 import { log } from '../server/logger'
 import { loadRuntimeSettings } from '@/lib/server/runtime/runtime-settings'
-import { resolveCliBinary, buildCliEnv, probeCliAuth, attachAbortHandler } from './cli-utils'
+import { resolveCliBinary, buildCliEnv, probeCliAuth, attachAbortHandler, isStderrNoise } from './cli-utils'
 
 /**
  * Gemini CLI provider — spawns `gemini --prompt <message> --output-format stream-json --yolo`.
@@ -151,7 +151,11 @@ export function streamGeminiCliChat({ session, message, imagePath, systemPrompt,
     const text = chunk.toString()
     stderrText += text
     if (stderrText.length > 16_000) stderrText = stderrText.slice(-16_000)
-    log.warn('gemini-cli', `stderr [${session.id}]`, text.slice(0, 500))
+    if (isStderrNoise(text)) {
+      log.debug('gemini-cli', `stderr noise [${session.id}]`, text.slice(0, 500))
+    } else {
+      log.warn('gemini-cli', `stderr [${session.id}]`, text.slice(0, 500))
+    }
   })
 
   return new Promise((resolve) => {

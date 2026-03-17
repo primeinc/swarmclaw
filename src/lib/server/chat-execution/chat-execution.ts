@@ -109,6 +109,8 @@ import {
   resolveMissionForTurn,
 } from '@/lib/server/missions/mission-service'
 
+const TAG = 'chat-execution'
+
 export {
   shouldApplySessionFreshnessReset,
   shouldAutoRouteHeartbeatAlerts,
@@ -1218,6 +1220,15 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
   const emit = (ev: SSEEvent) => {
     let shouldPersistPartial = false
     let immediatePartialPersist = false
+    if (ev.t === 'reset') {
+      // stream-agent-chat rolls back state after a transient error — reset
+      // accumulated text/thinking/tools so the partial persist stays in sync.
+      streamingPartialText = ev.text || ''
+      thinkingText = ''
+      toolEvents.length = 0
+      shouldPersistPartial = true
+      immediatePartialPersist = true
+    }
     if (ev.t === 'd' && typeof ev.text === 'string') {
       streamingPartialText += ev.text
       shouldPersistPartial = true
@@ -1378,7 +1389,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
         ? (heartbeatLightContext ? [] : getSessionMessages(sessionId).slice(-6))
         : undefined
 
-      console.log(`[chat-execution] provider=${providerType}, hasExtensions=${hasExtensions}, localOpenClawNative=${useLocalOpenClawNativeRuntime}, imagePath=${resolvedImagePath || 'none'}, attachedFiles=${attachedFiles?.length || 0}, extensions=${enabledSessionExtensions.length}`)
+      log.info(TAG, `provider=${providerType}, hasExtensions=${hasExtensions}, localOpenClawNative=${useLocalOpenClawNativeRuntime}, imagePath=${resolvedImagePath || 'none'}, attachedFiles=${attachedFiles?.length || 0}, extensions=${enabledSessionExtensions.length}`)
       if (hasExtensions) {
         const result = await streamAgentChat({
           session: sessionForRun,
@@ -1392,6 +1403,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
           write: (raw) => parseAndEmit(raw),
           history: heartbeatHistory ?? applyContextClearBoundary(getSessionMessages(sessionId)),
           signal: abortController.signal,
+          source,
         })
         fullResponse = result.finalResponse || result.fullText
       } else {
@@ -1760,7 +1772,7 @@ export async function executeSessionChatTurn(input: ExecuteChatTurnInput): Promi
           now: nowTs,
         })) {
           persistedResponseForHooks = nextAssistantMessage.text
-        } else if ((previous?.streaming && previous?.runId === lifecycleRunId) || shouldReplaceRecentAssistantMessage({
+        } else if (previous?.runId === lifecycleRunId || shouldReplaceRecentAssistantMessage({
           previous,
           nextToolEvents,
           nextKind,

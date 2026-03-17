@@ -123,7 +123,21 @@ export async function buildAgentAwarenessSection(
   if (!hasMultiAgentTool || !session.agentId) return null
   try {
     const { buildAgentAwarenessBlock } = await import('@/lib/server/agents/agent-registry')
-    return buildAgentAwarenessBlock(session.agentId) || null
+
+    // Load agent to get delegation settings so the awareness block respects them
+    let delegationOpts: { delegationTargetMode?: 'all' | 'selected'; delegationTargetAgentIds?: string[] } | undefined
+    try {
+      const agents = loadAgents() as Record<string, Agent>
+      const agent = agents[session.agentId]
+      if (agent?.delegationTargetMode === 'selected') {
+        delegationOpts = {
+          delegationTargetMode: 'selected',
+          delegationTargetAgentIds: agent.delegationTargetAgentIds || [],
+        }
+      }
+    } catch { /* non-critical */ }
+
+    return buildAgentAwarenessBlock(session.agentId, delegationOpts) || null
   } catch { return null }
 }
 
@@ -185,6 +199,8 @@ export function buildProjectSection(
       `project secrets ${summary.secretCount}`,
     ]
     if (summary.topTaskTitles.length > 0) lines.push(`Top open tasks: ${summary.topTaskTitles.join('; ')}`)
+    if (summary.failedTaskCount > 0) lines.push(`Failed tasks needing attention: ${summary.failedTaskCount}`)
+    if (summary.staleTaskCount > 0) lines.push(`Stale tasks (no update in 3+ days): ${summary.staleTaskCount}`)
     if (summary.scheduleNames.length > 0) lines.push(`Active schedules: ${summary.scheduleNames.join('; ')}`)
     if (summary.secretNames.length > 0) lines.push(`Known project secrets: ${summary.secretNames.join('; ')}`)
     lines.push(`Project resource summary: ${resourceBits.join(', ')}.`)
@@ -257,6 +273,11 @@ export function buildSuggestionsSection(
 // Proactive Memory Recall (async)
 // ---------------------------------------------------------------------------
 
+export interface ProactiveMemoryResult {
+  section: string | null
+  injectedIds: Record<string, number>
+}
+
 export async function buildProactiveMemorySection(
   session: Session,
   agent: Agent | null | undefined,
@@ -264,9 +285,10 @@ export async function buildProactiveMemorySection(
   activeProjectRoot: string | null,
   isMinimalPrompt: boolean,
   currentThreadRecallRequest: boolean,
-): Promise<string | null> {
-  if (isMinimalPrompt || !session.agentId || currentThreadRecallRequest || message.length <= 12) return null
-  if (!agent?.proactiveMemory) return null
+): Promise<ProactiveMemoryResult> {
+  const noResult: ProactiveMemoryResult = { section: null, injectedIds: {} }
+  if (isMinimalPrompt || !session.agentId || currentThreadRecallRequest || message.length <= 12) return noResult
+  if (!agent?.proactiveMemory) return noResult
   try {
     const { getMemoryDb } = await import('@/lib/server/memory/memory-db')
     const { buildSessionMemoryScopeFilter } = await import('@/lib/server/memory/session-memory-scope')
@@ -274,13 +296,29 @@ export async function buildProactiveMemorySection(
     const recalled = memDb.search(message, session.agentId, {
       scope: buildSessionMemoryScopeFilter(session, agent.memoryScopeMode || null, activeProjectRoot),
     })
-    const topRecalled = recalled.slice(0, 3)
+
+    // Dedup: skip memories already injected 2+ times in this session
+    const priorCounts = session.injectedMemoryIds || {}
+    const filtered = recalled.filter((entry) => (priorCounts[entry.id] || 0) < 2)
+
+    const topRecalled = filtered.slice(0, 3)
     if (topRecalled.length > 0) {
-      const recalledLines = topRecalled.map((entry) => `- ${entry.content.slice(0, 300)}`)
-      return `## Recalled Context\nRelevant memories from previous interactions:\n${recalledLines.join('\n')}`
+      // Track injection counts
+      const updatedCounts: Record<string, number> = { ...priorCounts }
+      for (const entry of topRecalled) {
+        updatedCounts[entry.id] = (updatedCounts[entry.id] || 0) + 1
+      }
+
+      const recalledLines = topRecalled.map((entry) =>
+        `- ${entry.abstract || entry.content.slice(0, 300)}`,
+      )
+      return {
+        section: `## Recalled Context\nRelevant memories from previous interactions:\n${recalledLines.join('\n')}`,
+        injectedIds: updatedCounts,
+      }
     }
   } catch { /* non-critical */ }
-  return null
+  return noResult
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +366,7 @@ export function buildCoordinatorSection(
   for (const w of listed) {
     const caps = w.capabilities?.length ? ` [${w.capabilities.join(', ')}]` : ''
     const desc = w.description ? ` — ${w.description.slice(0, 100)}` : ''
-    const line = `- **${w.name}**${caps}${desc}`
+    const line = `- **${w.name}** [id: ${w.id}]${caps}${desc}`
     if (charBudget - line.length < 0) break
     charBudget -= line.length + 1
     lines.push(line)
@@ -336,6 +374,11 @@ export function buildCoordinatorSection(
 
   if (workers.length > COORDINATOR_MAX_WORKERS) {
     lines.push(`- ... and ${workers.length - COORDINATOR_MAX_WORKERS} more workers`)
+  }
+
+  if (delegateMode === 'selected') {
+    lines.push('')
+    lines.push('**IMPORTANT:** You may ONLY delegate to the workers listed above. Do NOT attempt to delegate to any other agents — such attempts will be rejected.')
   }
 
   lines.push('')

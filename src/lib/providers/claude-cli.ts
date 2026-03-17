@@ -6,7 +6,9 @@ import type { StreamChatOptions } from './index'
 import { log } from '../server/logger'
 import { loadRuntimeSettings } from '@/lib/server/runtime/runtime-settings'
 import { getEnabledToolIds } from '@/lib/capability-selection'
-import { resolveCliBinary, buildCliEnv, probeCliAuth, attachAbortHandler } from './cli-utils'
+import { resolveCliBinary, buildCliEnv, probeCliAuth, attachAbortHandler, isStderrNoise } from './cli-utils'
+
+const TAG = 'provider-claude-cli'
 
 export function streamClaudeCliChat({ session, message, imagePath, systemPrompt, write, active, signal }: StreamChatOptions): Promise<string> {
   const processTimeoutMs = loadRuntimeSettings().cliProcessTimeoutMs
@@ -152,8 +154,12 @@ export function streamClaudeCliChat({ session, message, imagePath, systemPrompt,
     const text = chunk.toString()
     stderrText += text
     if (stderrText.length > 16_000) stderrText = stderrText.slice(-16_000)
-    log.warn('claude-cli', `stderr [${session.id}]`, text.slice(0, 500))
-    console.error(`[${session.id}] stderr:`, text.slice(0, 200))
+    if (isStderrNoise(text)) {
+      log.debug('claude-cli', `stderr noise [${session.id}]`, text.slice(0, 500))
+    } else {
+      log.warn('claude-cli', `stderr [${session.id}]`, text.slice(0, 500))
+      log.error(TAG, `[${session.id}] stderr:`, text.slice(0, 200))
+    }
   })
 
   return new Promise((resolve) => {

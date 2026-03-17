@@ -418,6 +418,7 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
   const effectiveThinking = !isUser
     ? (liveStreamActive ? (liveStream?.thinking?.trim() ? liveStream.thinking : undefined) : message.thinking)
     : undefined
+
   const sourceText = liveStreamActive ? (liveStream?.text || '') : message.text
   const connectorDeliveryTranscript = !isUser && message.kind === 'connector-delivery'
     ? (message.source?.deliveryTranscript?.trim() || '')

@@ -9,7 +9,7 @@ import type {
   SkillRequirements,
   SkillSecuritySummary,
 } from '@/types'
-import { dedup } from '@/lib/shared-utils'
+import { dedup, hmrSingleton } from '@/lib/shared-utils'
 import { expandExtensionIds, getExtensionAliases, normalizeExtensionId } from '@/lib/server/tool-aliases'
 import { loadLearnedSkills, loadSettings, loadSkills } from '@/lib/server/storage'
 import { cosineSimilarity, getEmbedding } from '@/lib/server/embeddings'
@@ -160,7 +160,8 @@ const SOURCE_PRIORITY: Record<RuntimeSkillSource, number> = {
 }
 
 const DEFAULT_RUNTIME_SKILL_TOP_K = 8
-const embeddingCache = new Map<string, Promise<number[] | null>>()
+const SKILL_EMBEDDING_CACHE_MAX = 200
+const embeddingCache = hmrSingleton('__swarmclaw_skill_embedding_cache__', () => new Map<string, Promise<number[] | null>>())
 
 function normalizeKey(value: string | null | undefined): string {
   return String(value || '')
@@ -859,6 +860,11 @@ async function getCachedSkillEmbedding(
   const key = getSkillEmbeddingCacheKey(skill)
   let cached = embeddingCache.get(key)
   if (!cached) {
+    // FIFO eviction when cache exceeds cap
+    if (embeddingCache.size >= SKILL_EMBEDDING_CACHE_MAX) {
+      const firstKey = embeddingCache.keys().next().value
+      if (firstKey !== undefined) embeddingCache.delete(firstKey)
+    }
     cached = embeddingResolver(buildSkillEmbeddingText(skill))
     embeddingCache.set(key, cached)
   }

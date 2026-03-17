@@ -84,8 +84,36 @@ export interface GetWalletPortfolioOptions {
   allowStale?: boolean
 }
 
+const PORTFOLIO_CACHE_MAX = 200
 const portfolioCache = new Map<string, WalletPortfolioCacheEntry>()
 const evmContractDiscoveryCache = new Map<string, EvmContractDiscoveryCacheEntry>()
+
+function pruneExpiredPortfolioCaches(): void {
+  const now = Date.now()
+  for (const [key, entry] of portfolioCache) {
+    if (entry.expiresAt <= now) portfolioCache.delete(key)
+  }
+  for (const [key, entry] of evmContractDiscoveryCache) {
+    if (entry.expiresAt <= now) evmContractDiscoveryCache.delete(key)
+  }
+  // Hard cap as safety net
+  if (portfolioCache.size > PORTFOLIO_CACHE_MAX) {
+    const excess = portfolioCache.size - PORTFOLIO_CACHE_MAX
+    const iter = portfolioCache.keys()
+    for (let i = 0; i < excess; i++) {
+      const k = iter.next().value
+      if (k !== undefined) portfolioCache.delete(k)
+    }
+  }
+  if (evmContractDiscoveryCache.size > PORTFOLIO_CACHE_MAX) {
+    const excess = evmContractDiscoveryCache.size - PORTFOLIO_CACHE_MAX
+    const iter = evmContractDiscoveryCache.keys()
+    for (let i = 0; i < excess; i++) {
+      const k = iter.next().value
+      if (k !== undefined) evmContractDiscoveryCache.delete(k)
+    }
+  }
+}
 
 const KNOWN_SOLANA_TOKENS: Record<string, { symbol: string; name: string }> = {
   EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: { symbol: 'USDC', name: 'USD Coin' },
@@ -721,6 +749,7 @@ export async function getWalletPortfolio(wallet: AgentWallet, options?: GetWalle
     label: `wallet portfolio ${wallet.id}`,
   })
 
+  pruneExpiredPortfolioCaches()
   portfolioCache.set(cacheKey, {
     expiresAt: Date.now() + PORTFOLIO_CACHE_TTL_MS,
     portfolio,

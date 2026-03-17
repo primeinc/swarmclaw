@@ -151,7 +151,7 @@ export function TaskSheet() {
     if (open && !editing && !agentId && agentList.length) {
       setAgentId(agentList[0].id)
     }
-  }, [open, editing, agentId, agentList.length, agents])
+  }, [open, editing, agentId, agentList])
 
   useEffect(() => {
     if (!editing?.id || !open) {

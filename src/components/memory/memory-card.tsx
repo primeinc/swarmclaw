@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { MemoryEntry } from '@/types'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { deriveMemoryScope, getMemoryScopeLabel, getMemoryTier } from '@/lib/memory-presentation'
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function MemoryCard({ entry, active, agentName, agentAvatarSeed, agentAvatarUrl, onClick }: Props) {
+  const [now] = useState(() => Date.now())
   const scope = deriveMemoryScope(entry)
   const tier = getMemoryTier(entry)
 
@@ -41,7 +43,7 @@ export function MemoryCard({ entry, active, agentName, agentAvatarSeed, agentAva
         )}
         <span className="font-display text-[13px] font-600 truncate flex-1 tracking-[-0.01em]">{entry.title}</span>
         <span className="text-[10px] text-text-3/60 shrink-0 tabular-nums font-mono">
-          {timeAgoShort(entry.updatedAt || entry.createdAt, Date.now())}
+          {timeAgoShort(entry.updatedAt || entry.createdAt, now)}
         </span>
       </div>
       <div className="text-[12px] text-text-2/40 mt-1 line-clamp-3 leading-relaxed">

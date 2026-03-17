@@ -226,7 +226,7 @@ const PlatformExtension: Extension = {
   description: 'Unified management of agents, projects, tasks, schedules, skills, documents, and secrets.',
   hooks: {
     getCapabilityDescription: () => 'I can manage durable execution context across agents, projects, tasks, schedules, documents, skills, webhooks, connectors, sessions, and encrypted secrets.',
-    getOperatingGuidance: () => ['Use projects to hold longer-lived goals, objectives, and credential requirements.', 'Create/update tasks for long-lived goals to track progress.', 'Use schedules for follow-ups and heartbeat-style check-ins. Check existing schedules before creating new ones.', 'Inspect existing chats before creating duplicates.'],
+    getOperatingGuidance: () => ['Use projects to hold longer-lived goals, objectives, and credential requirements.', 'Create/update tasks for long-lived goals to track progress.', 'When work on a task is finished, update its status to completed with a concrete result summary. Cancel or archive tasks that are no longer relevant. Stale open tasks block project progress.', 'Use schedules for follow-ups and heartbeat-style check-ins. Check existing schedules before creating new ones.', 'Inspect existing chats before creating duplicates.'],
   } as ExtensionHooks,
   tools: [
     {

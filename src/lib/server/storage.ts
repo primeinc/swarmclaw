@@ -6,7 +6,10 @@ import type { ChildProcess } from 'node:child_process'
 import Database from 'better-sqlite3'
 
 import { perf } from '@/lib/server/runtime/perf'
+import { log } from '@/lib/server/logger'
 import { notify } from '@/lib/server/ws-hub'
+
+const TAG = 'storage'
 import { DATA_DIR, IS_BUILD_BOOTSTRAP, WORKSPACE_DIR } from './data-dir'
 import { normalizeHeartbeatSettingFields } from '@/lib/runtime/heartbeat-defaults'
 import { normalizeRuntimeSettingFields } from '@/lib/runtime/runtime-loop'
@@ -264,8 +267,8 @@ function saveCollection(table: string, data: Record<string, unknown>) {
   // partial collection instead of a full load-modify-save.  This prevents
   // accidental data wipes (e.g. tests calling saveCredentials with 1 item).
   if (toDelete.length > 0 && next.size > 0 && toDelete.length > next.size) {
-    console.error(
-      `[storage] BLOCKED destructive saveCollection("${table}"): ` +
+    log.error(TAG,
+      `BLOCKED destructive saveCollection("${table}"): ` +
       `would delete ${toDelete.length} rows but only upsert ${next.size}. ` +
       `Use deleteCollectionItem() for explicit deletes or load-modify-save to update.`,
     )
@@ -537,7 +540,7 @@ const MIGRATION_FLAG = path.join(DATA_DIR, '.sqlite_migrated')
 function migrateFromJson() {
   if (fs.existsSync(MIGRATION_FLAG)) return
 
-  console.log('[storage] Migrating from JSON files to SQLite...')
+  log.info(TAG, 'Migrating from JSON files to SQLite...')
 
   const transaction = db.transaction(() => {
     for (const [table, jsonPath] of Object.entries(JSON_FILES)) {
@@ -549,7 +552,7 @@ function migrateFromJson() {
             for (const [id, val] of Object.entries(data)) {
               ins.run(id, JSON.stringify(val))
             }
-            console.log(`[storage]   Migrated ${table}: ${Object.keys(data).length} records`)
+            log.info(TAG, `Migrated ${table}: ${Object.keys(data).length} records`)
           }
         } catch { /* skip malformed files */ }
       }
@@ -562,7 +565,7 @@ function migrateFromJson() {
         const data = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
         if (data && Object.keys(data).length > 0) {
           saveSingleton('settings', data)
-          console.log('[storage]   Migrated settings')
+          log.info(TAG, 'Migrated settings')
         }
       } catch { /* skip */ }
     }
@@ -574,7 +577,7 @@ function migrateFromJson() {
         const data = JSON.parse(fs.readFileSync(queuePath, 'utf8'))
         if (Array.isArray(data) && data.length > 0) {
           saveSingleton('queue', data)
-          console.log(`[storage]   Migrated queue: ${data.length} items`)
+          log.info(TAG, `Migrated queue: ${data.length} items`)
         }
       } catch { /* skip */ }
     }
@@ -592,14 +595,14 @@ function migrateFromJson() {
             }
           }
         }
-        console.log('[storage]   Migrated usage records')
+        log.info(TAG, 'Migrated usage records')
       } catch { /* skip */ }
     }
   })
 
   transaction()
   fs.writeFileSync(MIGRATION_FLAG, new Date().toISOString())
-  console.log('[storage] Migration complete. JSON files preserved as backup.')
+  log.info(TAG, 'Migration complete. JSON files preserved as backup.')
 }
 
 if (!IS_BUILD_BOOTSTRAP) {
@@ -1398,6 +1401,14 @@ export function saveUsage(u: Record<string, UsageRecord[]>) {
 export function appendUsage(sessionId: string, record: unknown) {
   const ins = db.prepare('INSERT INTO usage (session_id, data) VALUES (?, ?)')
   ins.run(sessionId, JSON.stringify(record))
+}
+
+export function pruneOldUsage(maxAgeMs: number): number {
+  const cutoff = Date.now() - maxAgeMs
+  const result = db.prepare(
+    `DELETE FROM usage WHERE CAST(COALESCE(json_extract(data, '$.timestamp'), 0) AS INTEGER) < ?`
+  ).run(cutoff)
+  return result.changes
 }
 
 // --- Connectors ---

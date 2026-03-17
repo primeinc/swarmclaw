@@ -120,6 +120,16 @@ export function buildToolDisciplineLines(enabledExtensions: string[]): string[] 
 
   lines.push(...planning.disciplineGuidance)
 
+  // Universal tool efficiency guidance — tool-specific lines live in CORE_TOOL_PLANNING (tool-planning.ts)
+  lines.push(
+    '## Tool Efficiency',
+    'Plan your approach before starting tool calls. State what you will do, then do it.',
+    'Prefer fewer, larger tool calls over many small ones.',
+    'Do not poll for status in a loop. If waiting on a process, check once and move on.',
+    'If stuck after 2-3 attempts with the same approach, stop and state the blocker — do not keep retrying.',
+    'When delegating to subagents, use waitForCompletion or wait/wait_all instead of polling status in a loop.',
+  )
+
   const researchSearchTools = getToolsForCapability(enabledExtensions, TOOL_CAPABILITY.researchSearch)
   const researchFetchTools = getToolsForCapability(enabledExtensions, TOOL_CAPABILITY.researchFetch)
   const browserCaptureTools = getToolsForCapability(enabledExtensions, TOOL_CAPABILITY.browserCapture)
@@ -275,7 +285,7 @@ const GOAL_DECOMPOSITION_BLOCK = [
   '## Goal Decomposition',
   'When you receive a broad, open-ended goal:',
   '1. Break it into 3-7 concrete, sequentially-executable subtasks before taking action.',
-  '2. If manage_tasks is available, use it only for durable tracking: multi-turn work, delegation, explicit backlog requests, or work you expect to resume later. Do not create a task for every micro-step.',
+  '2. If manage_tasks is available, use it only for durable tracking: multi-turn work, delegation, explicit backlog requests, or work you expect to resume later. Do not create a task for every micro-step. Do not re-read the task list after every update. Read once, make your changes, then move on.',
   'Single-step instructions are not broad goals. For direct actions like storing a memory, answering a recall question, editing one file, or sending one message, execute the relevant tool immediately instead of creating tasks or delegating.',
   '3. Present the plan as a short checklist or numbered list in plain language. If durable tracking is unnecessary, keep it inline instead of creating tasks.',
   '4. Execute the first substantive subtask immediately — do not stop after planning.',

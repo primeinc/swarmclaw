@@ -10,11 +10,17 @@ export interface SkillEligibilityResult {
   reasons: string[]
 }
 
+const BINARY_CACHE_MAX = 200
 const binaryCache = new Map<string, boolean>()
 
 function hasBinary(name: string): boolean {
   const cached = binaryCache.get(name)
   if (cached !== undefined) return cached
+  // FIFO eviction at cap
+  if (binaryCache.size >= BINARY_CACHE_MAX) {
+    const firstKey = binaryCache.keys().next().value
+    if (firstKey !== undefined) binaryCache.delete(firstKey)
+  }
   try {
     execSync(`which ${name}`, { stdio: 'ignore', timeout: 2000 })
     binaryCache.set(name, true)

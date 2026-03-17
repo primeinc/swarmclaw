@@ -1,6 +1,9 @@
 import * as cheerio from 'cheerio'
 import { dedup } from '@/lib/shared-utils'
 import { truncate } from './session-tools/context'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'link-understanding'
 
 const BARE_LINK_RE = /https?:\/\/\S+/gi
 
@@ -48,7 +51,7 @@ export async function runLinkUnderstanding(message: string): Promise<string[]> {
       }
     } catch (err) {
       // Fail silently for link understanding — don't block the main run
-      console.error(`Link understanding failed for ${url}:`, err)
+      log.error(TAG, `Link understanding failed for ${url}:`, err)
     }
   }
 

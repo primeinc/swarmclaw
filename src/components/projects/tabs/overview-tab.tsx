@@ -46,8 +46,9 @@ export function OverviewTab({ project, missions }: OverviewTabProps) {
     [now, projectTasks],
   )
 
-  const completedTasks = projectTasks.filter((t) => t.status === 'completed').length
-  const totalTasks = projectTasks.length
+  const actionableTasks = projectTasks.filter((t) => t.status !== 'cancelled' && t.status !== 'archived')
+  const completedTasks = actionableTasks.filter((t) => t.status === 'completed').length
+  const totalTasks = actionableTasks.length
   const progressPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
 
   const tasksByStatus = useMemo(() => {

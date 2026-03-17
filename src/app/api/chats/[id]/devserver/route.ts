@@ -6,6 +6,9 @@ import { resolveDevServerLaunchDir } from '@/lib/server/runtime/devserver-launch
 import { safeParseBody } from '@/lib/server/safe-parse-body'
 import { sleep } from '@/lib/shared-utils'
 import net from 'net'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'api-devserver'
 
 interface DevServerStartResult {
   status?: number
@@ -61,11 +64,11 @@ async function startDevServer(id: string, session: { cwd: string }): Promise<Dev
 
   proc.stdout!.on('data', onData)
   proc.stderr!.on('data', onData)
-  proc.on('close', () => { devServers.delete(id); console.log(`[${id}] dev server stopped`) })
+  proc.on('close', () => { devServers.delete(id); log.info(TAG, `dev server stopped for ${id}`) })
   proc.on('error', () => devServers.delete(id))
 
   devServers.set(id, { proc, url: `http://${localIP()}:${port}` })
-  console.log(`[${id}] starting dev server in ${launch.launchDir} (session cwd=${session.cwd})`)
+  log.info(TAG, `starting dev server in ${launch.launchDir} (session cwd=${session.cwd})`)
 
   await sleep(4000)
   const ds = devServers.get(id)

@@ -15,11 +15,21 @@ export type NoVncObserverTokenPayload = {
   password?: string
 }
 
+const NOVNC_TOKEN_MAX = 500
 const noVncObserverTokens = new Map<string, NoVncObserverTokenEntry>()
 
 function pruneExpiredObserverTokens(now: number): void {
   for (const [token, entry] of noVncObserverTokens) {
     if (entry.expiresAt <= now) noVncObserverTokens.delete(token)
+  }
+  // Hard cap as safety net
+  if (noVncObserverTokens.size > NOVNC_TOKEN_MAX) {
+    const excess = noVncObserverTokens.size - NOVNC_TOKEN_MAX
+    const iter = noVncObserverTokens.keys()
+    for (let i = 0; i < excess; i++) {
+      const k = iter.next().value
+      if (k !== undefined) noVncObserverTokens.delete(k)
+    }
   }
 }
 

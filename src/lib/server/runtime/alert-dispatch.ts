@@ -1,6 +1,9 @@
 import { loadSettings } from '@/lib/server/storage'
 import type { AppNotification } from '@/types'
 import { errorMessage } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'alert-dispatch'
 
 /** In-memory rate limiter: dedupKey → last dispatch timestamp */
 const recentDispatches = new Map<string, number>()
@@ -23,11 +26,9 @@ export async function dispatchAlert(notification: AppNotification): Promise<void
   if (lastSent && now - lastSent < DEDUP_WINDOW_MS) return
   recentDispatches.set(dedupKey, now)
 
-  // Prune stale entries periodically
-  if (recentDispatches.size > 200) {
-    for (const [key, ts] of recentDispatches) {
-      if (now - ts > DEDUP_WINDOW_MS) recentDispatches.delete(key)
-    }
+  // Prune stale entries on every write to bound growth
+  for (const [key, ts] of recentDispatches) {
+    if (now - ts > DEDUP_WINDOW_MS) recentDispatches.delete(key)
   }
 
   const webhookType = settings.alertWebhookType || 'custom'
@@ -60,6 +61,6 @@ export async function dispatchAlert(notification: AppNotification): Promise<void
       signal: AbortSignal.timeout(5000),
     })
   } catch (err: unknown) {
-    console.warn('[alert-dispatch] Webhook delivery failed:', errorMessage(err))
+    log.warn(TAG, 'Webhook delivery failed:', errorMessage(err))
   }
 }

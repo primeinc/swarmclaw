@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 
 const CHECK_INTERVAL = 5 * 60_000 // 5 minutes
 
@@ -19,22 +19,17 @@ export function UpdateBanner() {
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
 
-  const checkVersion = useCallback(async () => {
-    try {
-      const res = await fetch('/api/version')
-      if (!res.ok) return
-      const data: VersionInfo = await res.json()
-      setVersion(data)
-    } catch {
-      // silently fail — no network or server issue
-    }
-  }, [])
-
   useEffect(() => {
+    const checkVersion = () => {
+      fetch('/api/version')
+        .then((res) => res.ok ? res.json() as Promise<VersionInfo> : null)
+        .then((data) => { if (data) setVersion(data) })
+        .catch(() => {})
+    }
     checkVersion()
     const id = setInterval(checkVersion, CHECK_INTERVAL)
     return () => clearInterval(id)
-  }, [checkVersion])
+  }, [])
 
   const handleUpdate = async () => {
     setUpdateState('updating')

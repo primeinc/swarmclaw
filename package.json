@@ -1,6 +1,6 @@
 {
   "name": "@swarmclawai/swarmclaw",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Self-hosted AI runtime for OpenClaw, delegation, autonomy, runtime skills, crypto wallets, and chat platform connectors.",
   "license": "MIT",
   "publishConfig": {
@@ -61,6 +61,9 @@
     "sandbox:build:browser": "docker build -f Dockerfile.sandbox-browser -t swarmclaw-sandbox-browser:bookworm-slim .",
     "benchmark:autonomy": "node ./scripts/benchmark-autonomy-harness.mjs",
     "benchmark:agent-regression": "node --import tsx ./scripts/run-agent-regression-suite.ts",
+    "type-check": "tsc --noEmit",
+    "test": "npm run test:cli && npm run test:setup && npm run test:openclaw",
+    "format": "eslint --fix",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "lint:baseline": "node ./scripts/lint-baseline.mjs check",

@@ -34,6 +34,8 @@ import { logExecution } from '@/lib/server/execution-log'
 import { logActivity } from '@/lib/server/storage'
 import { createNotification } from '@/lib/server/create-notification'
 
+const TAG = 'supervisor-reflection'
+
 const MAIN_LOOP_META_LINE_RE = /\[(?:MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]\s*(\{[^\n]*\})?/i
 const DEFAULT_TRANSCRIPT_MESSAGES = 12
 const DEFAULT_SNIPPET_CHARS = 800
@@ -367,6 +369,17 @@ export function assessAutonomyRun(input: {
 
   if (strongest?.kind === 'budget_pressure' && strongest.severity === 'high') shouldBlock = true
   if (strongest?.kind === 'run_error' && (status === 'failed' || status === 'cancelled')) shouldBlock = true
+
+  // Block after 3+ no_progress or repeated_tool incidents within 30 minutes for the same session
+  if (!shouldBlock && strongest && (strongest.kind === 'no_progress' || strongest.kind === 'repeated_tool')) {
+    const existingIncidents = Object.values(loadSupervisorIncidents()) as SupervisorIncident[]
+    const recentSame = existingIncidents.filter((i) =>
+      i.sessionId === input.sessionId
+      && i.createdAt > Date.now() - 30 * 60_000
+      && (i.kind === 'no_progress' || i.kind === 'repeated_tool'),
+    )
+    if (recentSame.length >= 3) shouldBlock = true
+  }
 
   const seen = new Set<string>()
   const autoActions: AutonomyAssessment['autoActions'] = []
@@ -1023,7 +1036,7 @@ export async function observeAutonomyRunOutcome(
   try {
     parsed = parseReflectionResponse(responseText)
   } catch {
-    console.warn(`[autonomy] Reflection parse failed for run ${input.runId}, skipping reflection`)
+    log.warn(TAG, `Reflection parse failed for run ${input.runId}, skipping reflection`)
     return { incidents, reflection: null }
   }
   if (parsed.skip) return { incidents, reflection: null }

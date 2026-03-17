@@ -5,6 +5,7 @@ import type { Extension, ExtensionHooks } from '@/types'
 import { registerNativeCapability } from '../native-capabilities'
 import { normalizeToolInputArgs } from './normalize-tool-args'
 import { errorMessage, sleep } from '@/lib/shared-utils'
+import { loadAgents } from '@/lib/server/storage'
 import {
   cancelDelegationJob,
   getDelegationJob,
@@ -99,7 +100,12 @@ function validateAllowedSubagentTarget(agentId: string, ctx: ActionContext): str
     ? ctx.delegationTargetAgentIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : []
   if (allowedAgentIds.length === 0 || allowedAgentIds.includes(agentId)) return null
-  return `Error: agent "${agentId}" is not in the allowed delegate agent list.`
+
+  const agents = loadAgents()
+  const allowedNames = allowedAgentIds
+    .map(id => agents[id]?.name ? `${agents[id].name} [${id}]` : id)
+    .join(', ')
+  return `Error: agent "${agentId}" is not in your allowed delegation list. You may only delegate to: ${allowedNames}. Do not retry with this agent.`
 }
 
 function parseBooleanLike(value: unknown): boolean | unknown {
@@ -538,6 +544,21 @@ registerNativeCapability('subagent', SubagentExtension)
  */
 export function buildSubagentTools(bctx: ToolBuildContext): StructuredToolInterface[] {
   if (!bctx.ctx?.delegationEnabled || !bctx.hasExtension('spawn_subagent')) return []
+
+  let description = SubagentExtension.tools![0].description
+  if (bctx.ctx?.delegationTargetMode === 'selected') {
+    const allowedIds = (bctx.ctx.delegationTargetAgentIds || []).filter(
+      (id): id is string => typeof id === 'string' && id.trim().length > 0,
+    )
+    if (allowedIds.length > 0) {
+      const agents = loadAgents()
+      const allowedSummary = allowedIds
+        .map(id => agents[id]?.name ? `${agents[id].name} [${id}]` : id)
+        .join(', ')
+      description += ` DELEGATION RESTRICTED: You may ONLY delegate to these agents: ${allowedSummary}. Attempts to delegate to any other agent will be rejected.`
+    }
+  }
+
   return [
     tool(
       async (args) => executeSubagentAction(args, {
@@ -548,7 +569,7 @@ export function buildSubagentTools(bctx: ToolBuildContext): StructuredToolInterf
       }),
       {
         name: 'spawn_subagent',
-        description: SubagentExtension.tools![0].description,
+        description,
         schema: subagentToolSchema
       }
     )

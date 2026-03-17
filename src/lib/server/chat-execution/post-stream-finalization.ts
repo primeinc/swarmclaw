@@ -6,7 +6,10 @@
  * and OpenClaw sync.
  */
 import type { Session, UsageRecord } from '@/types'
+import { log } from '@/lib/server/logger'
 import type { ChatTurnState } from '@/lib/server/chat-execution/chat-turn-state'
+
+const TAG = 'post-stream'
 import { extractSuggestions } from '@/lib/server/suggestions'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { estimateCost, buildExtensionDefinitionCosts } from '@/lib/server/cost'
@@ -39,7 +42,7 @@ function stripLeakedClassificationJson(text: string): { cleaned: string; strippe
     else if (text[i] === '}') { depth--; if (depth === 0) { end = i + 1; break } }
   }
   if (end === -1) return { cleaned: text, stripped: false }
-  console.warn('[post-stream-finalization] Stripped leaked classification JSON from model output')
+  log.warn(TAG, 'Stripped leaked classification JSON from model output')
   return { cleaned: (text.slice(0, startIdx) + text.slice(end)).trimStart(), stripped: true }
 }
 

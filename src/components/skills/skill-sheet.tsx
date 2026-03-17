@@ -64,8 +64,7 @@ export function SkillSheet() {
 
   useEffect(() => {
     if (open) loadAgents()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, loadAgents])
 
   useEffect(() => {
     if (open) {
@@ -91,7 +90,7 @@ export function SkillSheet() {
         setMetadataPreview(null)
       }
     }
-  }, [open, editingId])
+  }, [open, editingId, editing])
 
   const onClose = () => {
     setConfirmDelete(false)

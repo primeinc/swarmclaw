@@ -1,5 +1,8 @@
 import type { ClawHubSkill } from '@/types'
 import { errorMessage } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'clawhub-client'
 
 export interface ClawHubSearchResult {
   skills: ClawHubSkill[]
@@ -177,7 +180,7 @@ export async function searchClawHub(query: string, page = 1, limit = 20, cursor?
     return { skills, total, page, nextCursor: data.nextCursor }
   } catch (err: unknown) {
     const error = errorMessage(err)
-    console.warn('[clawhub] search failed:', error)
+    log.warn(TAG, 'search failed:', error)
     return { skills: [], total: 0, page, error }
   }
 }

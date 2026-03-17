@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { loadStoredItem, upsertStoredItem } from '@/lib/server/storage'
+import { loadStoredItem, upsertStoredItem, active } from '@/lib/server/storage'
 import { notFound } from '@/lib/server/collection-helpers'
 import { materializeStreamingAssistantArtifacts } from '@/lib/chat/chat-streaming-state'
 import { appendSessionNote } from '@/lib/server/session-note'
+import { getSessionRunState } from '@/lib/server/runtime/session-run-manager'
 import type { Message, Session } from '@/types'
 import { safeParseBody } from '@/lib/server/safe-parse-body'
 
@@ -12,8 +13,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!session) return notFound()
   session.messages = Array.isArray(session.messages) ? session.messages : []
 
+  // Check both persisted fields AND in-memory runtime state.
+  // The persisted session doesn't have active/currentRunId set during runs —
+  // those are only computed at runtime from the active map and run ledger.
   const sessionClaimsActive = session.active === true
     || (typeof session.currentRunId === 'string' && session.currentRunId.trim().length > 0)
+    || active.has(id)
+    || !!getSessionRunState(id).runningRunId
   if (!sessionClaimsActive && materializeStreamingAssistantArtifacts(session.messages)) {
     upsertStoredItem('sessions', id, session)
   }

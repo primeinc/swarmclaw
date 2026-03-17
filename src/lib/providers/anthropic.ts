@@ -2,7 +2,10 @@ import fs from 'fs'
 import https from 'https'
 import type { StreamChatOptions } from './index'
 import { PROVIDER_DEFAULTS, IMAGE_EXTS, TEXT_EXTS, ANTHROPIC_MAX_TOKENS, MAX_HISTORY_MESSAGES, writeSSE } from './provider-defaults'
+import { log } from '@/lib/server/logger'
 import { resolveImagePath } from '@/lib/server/resolve-image'
+
+const TAG = 'provider-anthropic'
 
 async function fileToContentBlocks(filePath: string): Promise<Array<Record<string, unknown>>> {
   if (!filePath || !fs.existsSync(filePath)) return []
@@ -71,7 +74,7 @@ export function streamAnthropicChat({ session, message, imagePath, apiKey, syste
         apiRes.on('data', (c: Buffer) => errBody += c)
         apiRes.on('end', () => {
           const msg = `Anthropic error ${apiRes.statusCode}: ${errBody.slice(0, 200)}`
-          console.error(`[${session.id}] ${msg}`)
+          log.error(TAG, `[${session.id}] ${msg}`)
           let errMsg = `Anthropic API error (${apiRes.statusCode})`
           try {
             const parsed = JSON.parse(errBody)
@@ -124,12 +127,12 @@ export function streamAnthropicChat({ session, message, imagePath, apiKey, syste
     active.set(session.id, { kill: () => { abortController.aborted = true; apiReq.destroy() } })
 
     apiReq.on('timeout', () => {
-      console.error(`[${session.id}] anthropic request timed out after 60s`)
+      log.error(TAG, `[${session.id}] anthropic request timed out after 60s`)
       apiReq.destroy(new Error('Request timed out after 60s'))
     })
 
     apiReq.on('error', (e) => {
-      console.error(`[${session.id}] anthropic request error:`, e.message)
+      log.error(TAG, `[${session.id}] anthropic request error:`, e.message)
       writeSSE(write, 'err', e.message)
       active.delete(session.id)
       reject(e)

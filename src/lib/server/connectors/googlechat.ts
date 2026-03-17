@@ -1,5 +1,8 @@
+import { log } from '@/lib/server/logger'
 import type { PlatformConnector, ConnectorInstance, InboundMessage } from './types'
 import { resolveConnectorIngressReply } from './ingress-delivery'
+
+const TAG = 'googlechat'
 
 const googlechat: PlatformConnector = {
   async start(connector, botToken, onMessage): Promise<ConnectorInstance> {
@@ -29,11 +32,11 @@ const googlechat: PlatformConnector = {
     const handlerKey = `__swarmclaw_googlechat_handler_${connector.id}__`
     let stopped = false
 
-    console.log(`[googlechat] Bot authenticated via service account`)
+    log.info(TAG, 'Bot authenticated via service account')
     if (allowedSpaces) {
-      console.log(`[googlechat] Filtering to spaces: ${allowedSpaces.join(', ')}`)
+      log.info(TAG, `Filtering to spaces: ${allowedSpaces.join(', ')}`)
     }
-    console.log(`[googlechat] Inbound webhook endpoint: /api/connectors/${connector.id}/webhook`)
+    log.info(TAG, `Inbound webhook endpoint: /api/connectors/${connector.id}/webhook`)
 
     function cleanInboundText(raw: unknown): string {
       const txt = typeof raw === 'string' ? raw : ''
@@ -100,7 +103,7 @@ const googlechat: PlatformConnector = {
         stopped = true
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         delete (globalThis as any)[handlerKey]
-        console.log(`[googlechat] Bot disconnected`)
+        log.info(TAG, 'Bot disconnected')
       },
     }
   },

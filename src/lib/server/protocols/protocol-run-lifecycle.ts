@@ -2,7 +2,10 @@
  * Protocol run lifecycle: create/run/action, scheduling/recovery, launch helpers.
  * Groups G10 + G18 + G19 from protocol-service.ts
  */
+import { log } from '@/lib/server/logger'
 import { genId } from '@/lib/id'
+
+const TAG = 'protocol-run-lifecycle'
 import type {
   ProtocolRun,
   ProtocolRunConfig,
@@ -58,7 +61,7 @@ export function requestProtocolRunExecution(runId: string, deps?: ProtocolRunDep
   setTimeout(() => {
     void runProtocolRun(normalizedId, deps)
       .catch((err: unknown) => {
-        console.warn(`[protocols] execution failed for ${normalizedId}: ${errorMessage(err)}`)
+        log.warn(TAG, `execution failed for ${normalizedId}: ${errorMessage(err)}`)
       })
       .finally(() => {
         protocolExecutionState.pendingRunIds.delete(normalizedId)
@@ -300,7 +303,7 @@ export function createProtocolRun(input: CreateProtocolRunInput, deps?: Protocol
 export async function runProtocolRun(runId: string, deps?: ProtocolRunDeps): Promise<ProtocolRun | null> {
   const release = acquireProtocolLease(runId)
   if (!release) {
-    console.warn(`[protocols] could not acquire lease for run ${runId}, another execution may be active`)
+    log.warn(TAG, `could not acquire lease for run ${runId}, another execution may be active`)
     return loadProtocolRunById(runId)
   }
   try {

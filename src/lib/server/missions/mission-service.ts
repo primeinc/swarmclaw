@@ -1,3 +1,4 @@
+import { log } from '@/lib/server/logger'
 import { genId } from '@/lib/id'
 import type {
   ApprovalRequest,
@@ -49,6 +50,8 @@ import {
 import { errorMessage, hmrSingleton } from '@/lib/shared-utils'
 import { getSessionQueueSnapshot, listRuns } from '@/lib/server/runtime/session-run-manager'
 import { notify } from '@/lib/server/ws-hub'
+
+const TAG = 'mission-service'
 
 function now(): number {
   return Date.now()
@@ -1146,7 +1149,7 @@ export function requestMissionTick(
   })
   queueMicrotask(() => {
     void runMissionTick(missionId, trigger).catch((err: unknown) => {
-      console.warn(`[missions] mission tick failed for ${missionId}: ${errorMessage(err)}`)
+      log.warn(TAG, `mission tick failed for ${missionId}: ${errorMessage(err)}`)
     })
   })
   return mission
@@ -1570,7 +1573,7 @@ export async function resolveMissionForTurn(params: {
       session: params.session,
     }, params.generateText ? { generateText: params.generateText } : undefined)
   } catch (err: unknown) {
-    console.warn(`[missions] resolveMissionForTurn failed for ${params.session.id}: ${errorMessage(err)}`)
+    log.warn(TAG, `resolveMissionForTurn failed for ${params.session.id}: ${errorMessage(err)}`)
     return null
   }
 
@@ -1649,7 +1652,7 @@ export async function applyMissionOutcomeForTurn(params: {
       linkedTaskSummaries: taskSummaries,
     }, params.generateText ? { generateText: params.generateText } : undefined)
   } catch (err: unknown) {
-    console.warn(`[missions] applyMissionOutcomeForTurn failed for ${params.session.id}: ${errorMessage(err)}`)
+    log.warn(TAG, `applyMissionOutcomeForTurn failed for ${params.session.id}: ${errorMessage(err)}`)
     return mission
   }
   if (!decision) return mission

@@ -3,8 +3,11 @@ import http from 'http'
 import https from 'https'
 import type { StreamChatOptions } from './index'
 import { IMAGE_EXTS, TEXT_EXTS, MAX_HISTORY_MESSAGES, writeSSE } from './provider-defaults'
+import { log } from '@/lib/server/logger'
 import { resolveOllamaRuntimeConfig } from '@/lib/server/ollama-runtime'
 import { resolveImagePath } from '@/lib/server/resolve-image'
+
+const TAG = 'provider-ollama'
 
 export function streamOllamaChat({ session, message, imagePath, apiKey, write, active, loadHistory, onUsage, signal }: StreamChatOptions): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -69,7 +72,7 @@ export function streamOllamaChat({ session, message, imagePath, apiKey, write, a
         apiRes.on('data', (c: Buffer) => errBody += c)
         apiRes.on('end', () => {
           const msg = `Ollama error ${apiRes.statusCode}: ${errBody.slice(0, 200)}`
-          console.error(`[${session.id}] ${msg}`)
+          log.error(TAG, `[${session.id}] ${msg}`)
           writeSSE(write, 'err', msg.slice(0, 120))
           active.delete(session.id)
           reject(new Error(msg))
@@ -114,7 +117,7 @@ export function streamOllamaChat({ session, message, imagePath, apiKey, write, a
     active.set(session.id, { kill: () => { abortController.aborted = true; apiReq.destroy() } })
 
     apiReq.on('error', (e: NodeJS.ErrnoException) => {
-      console.error(`[${session.id}] ollama request error:`, e.message)
+      log.error(TAG, `[${session.id}] ollama request error:`, e.message)
       let errMsg = e.message
       if (e.code === 'ECONNREFUSED') {
         errMsg = `Cannot connect to Ollama at ${endpoint}. Is Ollama running?`

@@ -4,6 +4,9 @@ import { getMemoryDb } from '@/lib/server/memory/memory-db'
 import { loadSettings } from '@/lib/server/storage'
 import { syncAllSessionArchiveMemories } from '@/lib/server/memory/session-archive-memory'
 import { DATA_DIR } from '@/lib/server/data-dir'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'api-memory-maintenance'
 
 function parseBool(value: unknown, fallback: boolean): boolean {
   if (typeof value === 'boolean') return value
@@ -46,7 +49,7 @@ export async function GET(req: Request) {
       archiveExportDir: path.join(DATA_DIR, 'session-archives'),
     })
   } catch (err: unknown) {
-    console.error('[memory/maintenance] GET failed:', err)
+    log.error(TAG, 'GET failed:', err)
     return NextResponse.json({ ok: false, error: String((err as Error)?.message || err) }, { status: 500 })
   }
 }
@@ -77,7 +80,7 @@ export async function POST(req: Request) {
       ...result,
     })
   } catch (err: unknown) {
-    console.error('[memory/maintenance] POST failed:', err)
+    log.error(TAG, 'POST failed:', err)
     return NextResponse.json({ ok: false, error: String((err as Error)?.message || err) }, { status: 500 })
   }
 }

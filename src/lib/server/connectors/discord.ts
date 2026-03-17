@@ -1,3 +1,4 @@
+import { log } from '@/lib/server/logger'
 import { Client, GatewayIntentBits, Events, Partials, AttachmentBuilder } from 'discord.js'
 import fs from 'fs'
 import path from 'path'
@@ -7,6 +8,8 @@ import { resolveConnectorIngressReply } from './ingress-delivery'
 import { deliverChunkedConnectorText } from './delivery'
 import { downloadInboundMediaToUpload, inferInboundMediaType } from './media'
 import { errorMessage } from '@/lib/shared-utils'
+
+const TAG = 'discord'
 
 function buildDiscordThreadTitle(params: {
   threadName?: string
@@ -89,7 +92,7 @@ async function hydrateDiscordThreadContext(message: any, inbound: InboundMessage
       }].filter((entry) => entry.text.trim().length > 0)
     }
   } catch (err: unknown) {
-    console.warn(`[discord] Thread context bootstrap failed: ${errorMessage(err)}`)
+    log.warn(TAG, `Thread context bootstrap failed: ${errorMessage(err)}`)
   }
 }
 
@@ -128,7 +131,7 @@ const discord: PlatformConnector = {
     }
 
     client.on(Events.MessageCreate, async (message) => {
-      console.log(`[discord] Message from ${message.author.username} in ${message.channel.type === 1 ? 'DM' : '#' + ('name' in message.channel ? (message.channel as any).name : message.channelId)}: ${message.content.slice(0, 80)}`)
+      log.info(TAG, `Message from ${message.author.username} in ${message.channel.type === 1 ? 'DM' : '#' + ('name' in message.channel ? (message.channel as any).name : message.channelId)}: ${message.content.slice(0, 80)}`)
       // Ignore bot messages
       if (message.author.bot) return
 
@@ -155,7 +158,7 @@ const discord: PlatformConnector = {
             }
           } catch (err: unknown) {
             const errMsg = errorMessage(err)
-            console.warn(`[discord] Media download failed (${attachment.name || 'file'}):`, errMsg)
+            log.warn(TAG, `Media download failed (${attachment.name || 'file'}):`, errMsg)
           }
         }
         media.push({
@@ -215,7 +218,7 @@ const discord: PlatformConnector = {
           },
         })
       } catch (err: any) {
-        console.error(`[discord] Error handling message:`, err.message)
+        log.error(TAG, 'Error handling message:', err.message)
         try {
           await message.reply('Sorry, I encountered an error processing your message.')
         } catch { /* ignore */ }
@@ -223,7 +226,7 @@ const discord: PlatformConnector = {
     })
 
     await client.login(botToken)
-    console.log(`[discord] Bot logged in as ${client.user?.tag}`)
+    log.info(TAG, `Bot logged in as ${client.user?.tag}`)
 
     const instance: ConnectorInstance = {
       connector,
@@ -284,7 +287,7 @@ const discord: PlatformConnector = {
       },
       async stop() {
         client.destroy()
-        console.log(`[discord] Bot disconnected`)
+        log.info(TAG, 'Bot disconnected')
       },
     }
 
@@ -293,7 +296,7 @@ const discord: PlatformConnector = {
       instance.onCrash?.('Discord session invalidated')
     })
     client.on('shardError', (error) => {
-      console.error(`[discord] Shard error:`, error.message)
+      log.error(TAG, 'Shard error:', error.message)
     })
 
     return instance

@@ -7,6 +7,9 @@ import { resolveConnectorIngressReply } from './ingress-delivery'
 import { deliverChunkedConnectorText } from './delivery'
 import { downloadInboundMediaToUpload, inferInboundMediaType, mimeFromPath, isImageMime } from './media'
 import { dedup, errorMessage } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'slack'
 
 function normalizeSlackEmoji(input: string): string {
   const raw = input.trim().replace(/^:|:$/g, '')
@@ -99,7 +102,7 @@ async function hydrateSlackThreadContext(params: {
     params.inbound.threadPersonaLabel = params.inbound.threadTitle
     params.inbound.threadHistory = history.length ? history : undefined
   } catch (err: unknown) {
-    console.warn(`[slack] Thread context bootstrap failed: ${errorMessage(err)}`)
+    log.warn(TAG, `Thread context bootstrap failed: ${errorMessage(err)}`)
   }
 }
 
@@ -141,7 +144,7 @@ const slack: PlatformConnector = {
         throw new Error('Auth test returned empty — the bot token may be revoked or the app uninstalled')
       }
       botUserId = auth.user_id as string
-      console.log(`[slack] Authenticated as @${auth.user} in workspace "${auth.team}"`)
+      log.info(TAG, `Authenticated as @${auth.user} in workspace "${auth.team}"`)
     } catch (err: any) {
       const hint = err.code === 'slack_webapi_platform_error'
         ? '. Check that your Bot Token (xoxb-...) is correct and the app is installed to the workspace.'
@@ -159,7 +162,7 @@ const slack: PlatformConnector = {
 
     // Catch global errors so they don't become unhandled rejections
     app.error(async (error) => {
-      console.error(`[slack] App error:`, error)
+      log.error(TAG, 'App error:', error)
     })
 
     // Optional: restrict to specific channels
@@ -177,7 +180,7 @@ const slack: PlatformConnector = {
       const channelId = msg.channel
       if (allowedChannels && !allowedChannels.includes(channelId)) return
 
-      console.log(`[slack] Message in ${channelId} from ${msg.user}: ${(msg.text || '').slice(0, 80)}`)
+      log.info(TAG, `Message in ${channelId} from ${msg.user}: ${(msg.text || '').slice(0, 80)}`)
 
       // Get user info for display name
       let senderName = msg.user || 'unknown'
@@ -213,7 +216,7 @@ const slack: PlatformConnector = {
                 continue
               }
             } catch (err: any) {
-              console.warn(`[slack] Media download failed (${f?.name || 'file'}):`, err?.message || String(err))
+              log.warn(TAG, `Media download failed (${f?.name || 'file'}):`, err?.message || String(err))
             }
           }
           media.push({
@@ -262,7 +265,7 @@ const slack: PlatformConnector = {
           },
         })
       } catch (err: any) {
-        console.error(`[slack] Error handling message:`, err.message)
+        log.error(TAG, 'Error handling message:', err.message)
         try {
           await say('Sorry, I encountered an error processing your message.')
         } catch { /* ignore */ }
@@ -320,12 +323,12 @@ const slack: PlatformConnector = {
           },
         })
       } catch (err: any) {
-        console.error(`[slack] Error handling mention:`, err.message)
+        log.error(TAG, 'Error handling mention:', err.message)
       }
     })
 
     await app.start()
-    console.log(`[slack] Bot connected (socket mode)`)
+    log.info(TAG, 'Bot connected (socket mode)')
 
     let appStopped = false
 
@@ -423,14 +426,14 @@ const slack: PlatformConnector = {
       async stop() {
         appStopped = true
         await app.stop()
-        console.log(`[slack] Bot disconnected`)
+        log.info(TAG, 'Bot disconnected')
       },
     }
 
     // Bolt emits 'error' on unrecoverable failures (auth revoked, socket closed permanently)
     app.error(async (error) => {
       const errMsg = error.original?.message || error.message || String(error)
-      console.error(`[slack] App error:`, errMsg)
+      log.error(TAG, 'App error:', errMsg)
       if (appStopped) return
       appStopped = true
       instance.onCrash?.(`Slack error: ${errMsg}`)

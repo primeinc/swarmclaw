@@ -100,13 +100,6 @@ const LiveStreamBubble = memo(function LiveStreamBubble(props: LiveStreamBubbleP
   return <MessageBubble {...props} liveStream={liveStream} />
 })
 
-interface LastMessageMomentOverlayProps {
-  messages: Message[]
-  sessionId: string | null
-  agentId?: string | null
-  streaming: boolean
-  children: (momentOverlay: React.ReactNode, currentMoment: { kind: string } | null) => React.ReactNode
-}
 
 function useLastMessageMoment(messages: Message[], sessionId: string | null, agentId: string | null | undefined, streaming: boolean) {
   type MomentType = { kind: 'heartbeat' } | { kind: 'tool'; key: string; name: string; input: string }
@@ -117,31 +110,24 @@ function useLastMessageMoment(messages: Message[], sessionId: string | null, age
     setCurrentMoment({ kind: 'heartbeat' })
   })
 
-  const prevToolKeyRef = useRef<string | null>(null)
-  const seededMomentSessionRef = useRef<string | null>(null)
+  const [trackedSessionId, setTrackedSessionId] = useState<string | null>(null)
+  const [trackedToolKey, setTrackedToolKey] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!sessionId) {
-      seededMomentSessionRef.current = null
-      prevToolKeyRef.current = null
-      setCurrentMoment(null)
-      return
-    }
-
-    if (seededMomentSessionRef.current === sessionId) return
-    seededMomentSessionRef.current = sessionId
-    prevToolKeyRef.current = getLatestAssistantToolMoment(messages)?.key || null
-    setCurrentMoment(null)
-  }, [messages, sessionId])
-
-  useEffect(() => {
-    if (!sessionId || seededMomentSessionRef.current !== sessionId) return
+  // Render-time: respond to sessionId/messages changes (avoids set-state-in-effect)
+  if (sessionId !== trackedSessionId) {
+    setTrackedSessionId(sessionId)
+    const initialKey = sessionId
+      ? getLatestAssistantToolMoment(messages)?.key || null
+      : null
+    setTrackedToolKey(initialKey)
+    if (currentMoment !== null) setCurrentMoment(null)
+  } else if (sessionId) {
     const moment = getLatestAssistantToolMoment(messages)
-    if (!moment) return
-    if (moment.key === prevToolKeyRef.current) return
-    prevToolKeyRef.current = moment.key
-    setCurrentMoment({ kind: 'tool', key: moment.key, name: moment.name, input: moment.input })
-  }, [messages, sessionId])
+    if (moment && moment.key !== trackedToolKey) {
+      setTrackedToolKey(moment.key)
+      setCurrentMoment({ kind: 'tool', key: moment.key, name: moment.name, input: moment.input })
+    }
+  }
 
   const momentOverlay = useMemo(() => {
     if (streaming || !currentMoment) return null
@@ -159,13 +145,6 @@ function useLastMessageMoment(messages: Message[], sessionId: string | null, age
   }, [streaming, currentMoment])
 
   return { currentMoment, momentOverlay }
-}
-
-interface Props {
-  messages: Message[]
-  streaming: boolean
-  connectorFilter?: string | null
-  loading?: boolean
 }
 
 interface LiveThinkingLaneProps {
@@ -194,6 +173,13 @@ const LiveThinkingLane = memo(function LiveThinkingLane({
     />
   )
 })
+
+interface Props {
+  messages: Message[]
+  streaming: boolean
+  connectorFilter?: string | null
+  loading?: boolean
+}
 
 export function MessageList({ messages, streaming, connectorFilter = null, loading = false }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -232,7 +218,7 @@ export function MessageList({ messages, streaming, connectorFilter = null, loadi
   const showGatewayOverlay = isOpenClaw && gatewayStatus === 'disconnected'
 
   // Moment overlay for last assistant message (heartbeat or tool events)
-  const { currentMoment, momentOverlay: lastMomentOverlay } = useLastMessageMoment(messages, sessionId, agent?.id, streaming)
+  const { momentOverlay: lastMomentOverlay } = useLastMessageMoment(messages, sessionId, agent?.id, streaming)
 
   // Unread count tracking
   const unreadRef = useRef(0)

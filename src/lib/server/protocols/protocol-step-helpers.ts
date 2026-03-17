@@ -4,7 +4,10 @@
  */
 import { z } from 'zod'
 import { HumanMessage } from '@langchain/core/messages'
+import { log } from '@/lib/server/logger'
 import { genId } from '@/lib/id'
+
+const TAG = 'protocol-step-helpers'
 import type {
   ProtocolBranchCase,
   ProtocolConditionDefinition,
@@ -161,7 +164,7 @@ export function syncProtocolParentFromChildRun(runOrId: ProtocolRun | string, de
   const subflowState = parent.subflowState?.[child.parentStepId]
   if (subflowState && subflowState.childRunId === child.id) {
     if (typeof subflowMod.syncSubflowParentFromChildRun !== 'function') {
-      console.warn('[protocol] syncSubflowParentFromChildRun not available (circular dep not yet resolved), skipping subflow sync')
+      log.warn(TAG, 'syncSubflowParentFromChildRun not available (circular dep not yet resolved), skipping subflow sync')
       return parent
     }
     return subflowMod.syncSubflowParentFromChildRun(child, parent, subflowState, deps)

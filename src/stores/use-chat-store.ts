@@ -418,7 +418,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let toolCallCounter = 0
     let soundFiredStart = false
     const shouldIgnoreTransientError = (msg: string) =>
-      /cancelled by steer mode|stopped by user/i.test(msg || '')
+      /cancelled by steer mode|stopped by user|stream timed out/i.test(msg || '')
 
     try { await streamChat(sessionId, text, imagePath, imageUrl, (event: SSEEvent) => {
       // Forward events to voice conversation handler if active
@@ -860,6 +860,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       displayText: '',
       streamPhase: 'thinking' as const,
       streamToolName: '',
+      thinkingText: '',
+      thinkingStartTime: 0,
+      toolEvents: [],
+      agentStatus: null,
     })
   },
 }))

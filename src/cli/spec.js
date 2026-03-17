@@ -496,6 +496,7 @@ const COMMAND_GROUPS = {
     description: 'System and version endpoints',
     commands: {
       ip: { description: 'Get local bind IP/port', method: 'GET', path: '/ip' },
+      status: { description: 'Get lightweight system health summary (safe for external monitors)', method: 'GET', path: '/system/status' },
       usage: { description: 'Get usage summary', method: 'GET', path: '/usage' },
       version: { description: 'Get local/remote git version info', method: 'GET', path: '/version' },
       update: { description: 'Update to latest stable release tag (fallback: main)', method: 'POST', path: '/version/update' },

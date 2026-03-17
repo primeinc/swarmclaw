@@ -5,7 +5,9 @@ import { spawn } from 'child_process'
 import type { StreamChatOptions } from './index'
 import { log } from '../server/logger'
 import { loadRuntimeSettings } from '@/lib/server/runtime/runtime-settings'
-import { resolveCliBinary, buildCliEnv, probeCliAuth, attachAbortHandler, symlinkConfigFiles } from './cli-utils'
+import { resolveCliBinary, buildCliEnv, probeCliAuth, attachAbortHandler, symlinkConfigFiles, isStderrNoise } from './cli-utils'
+
+const TAG = 'provider-codex'
 
 function codexModelRequiresReasoningDowngrade(model: string | null | undefined): boolean {
   const value = String(model || '').trim().toLowerCase()
@@ -196,8 +198,12 @@ export function streamCodexCliChat({ session, message, imagePath, systemPrompt, 
     const text = chunk.toString()
     stderrText += text
     if (stderrText.length > 16_000) stderrText = stderrText.slice(-16_000)
-    log.warn('codex-cli', `stderr [${session.id}]`, text.slice(0, 500))
-    console.error(`[${session.id}] codex stderr:`, text.slice(0, 200))
+    if (isStderrNoise(text)) {
+      log.debug('codex-cli', `stderr noise [${session.id}]`, text.slice(0, 500))
+    } else {
+      log.warn('codex-cli', `stderr [${session.id}]`, text.slice(0, 500))
+      log.error(TAG, `[${session.id}] codex stderr:`, text.slice(0, 200))
+    }
   })
 
   return new Promise((resolve) => {

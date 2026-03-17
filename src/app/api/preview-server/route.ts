@@ -8,6 +8,9 @@ import { resolveDevServerLaunchDir } from '@/lib/server/runtime/devserver-launch
 import { resolvePathWithinBaseDir } from '@/lib/server/path-utils'
 import { safeParseBody } from '@/lib/server/safe-parse-body'
 import { hmrSingleton, sleep } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'api-preview-server'
 
 // ---------------------------------------------------------------------------
 // MIME types for static server
@@ -181,7 +184,7 @@ function createStaticServer(dir: string): http.Server {
 async function startNpmServer(dir: string, command: string[], port: number, framework?: string): Promise<PreviewServer> {
   // Install deps if node_modules missing
   if (!fs.existsSync(path.join(dir, 'node_modules'))) {
-    console.log(`[preview] Installing dependencies in ${dir}`)
+    log.info(TAG, `Installing dependencies in ${dir}`)
     await new Promise<void>((resolve, reject) => {
       const install = spawn('npm', ['install'], { cwd: dir, stdio: 'pipe' })
       install.on('close', (code) => code === 0 ? resolve() : reject(new Error(`npm install exited ${code}`)))
@@ -206,14 +209,14 @@ async function startNpmServer(dir: string, command: string[], port: number, fram
     env,
   })
 
-  let log = ''
+  let processOutput = ''
   let detectedPort = port
   const urlRe = /https?:\/\/(?:localhost|0\.0\.0\.0|127\.0\.0\.1|[\d.]+):(\d+)/
 
   const onData = (chunk: Buffer) => {
     const text = chunk.toString()
-    log += text
-    if (log.length > 10000) log = log.slice(-5000)
+    processOutput += text
+    if (processOutput.length > 10000) processOutput = processOutput.slice(-5000)
     const match = text.match(urlRe)
     if (match) {
       detectedPort = parseInt(match[1], 10)
@@ -236,7 +239,7 @@ async function startNpmServer(dir: string, command: string[], port: number, fram
 
   proc.on('close', () => {
     servers.delete(dirKey(dir))
-    console.log(`[preview] npm server stopped for ${dir}`)
+    log.info(TAG, `npm server stopped for ${dir}`)
   })
   proc.on('error', () => servers.delete(dirKey(dir)))
 
@@ -246,10 +249,10 @@ async function startNpmServer(dir: string, command: string[], port: number, fram
   await sleep(5000)
   if (proc.exitCode !== null) {
     servers.delete(dirKey(dir))
-    throw new Error(`npm dev server exited early with code ${proc.exitCode}\n${log.slice(-4000)}`)
+    throw new Error(`npm dev server exited early with code ${proc.exitCode}\n${processOutput.slice(-4000)}`)
   }
   entry.port = detectedPort
-  entry.log = log
+  entry.log = processOutput
 
   return entry
 }
@@ -295,7 +298,7 @@ export async function POST(req: Request) {
     const port = await findFreePort()
 
     if (project.type === 'npm' && project.devCommand) {
-      console.log(`[preview] Detected ${project.framework} project in ${launch.launchDir}, running: ${project.devCommand.join(' ')}`)
+      log.info(TAG, `Detected ${project.framework} project in ${launch.launchDir}, running: ${project.devCommand.join(' ')}`)
       try {
         const entry = await startNpmServer(launch.launchDir, project.devCommand, port, project.framework)
         return NextResponse.json({
@@ -305,7 +308,7 @@ export async function POST(req: Request) {
           launchDir: launch.launchDir,
         })
       } catch (err: unknown) {
-        console.error(`[preview] npm server failed, falling back to static:`, err)
+        log.error(TAG, 'npm server failed, falling back to static:', err)
         // Fall through to static server
       }
     }
@@ -319,7 +322,7 @@ export async function POST(req: Request) {
 
     const entry: PreviewServer = { type: 'static', server, port, dir, startedAt: Date.now(), log: '' }
     servers.set(key, entry)
-    console.log(`[preview] Started static server for ${dir} on port ${port}`)
+    log.info(TAG, `Started static server for ${dir} on port ${port}`)
 
     return NextResponse.json(buildResponse(entry))
 
@@ -332,7 +335,7 @@ export async function POST(req: Request) {
       }
       if (srv.server) srv.server.close()
       servers.delete(key)
-      console.log(`[preview] Stopped server for ${launch.launchDir}`)
+      log.info(TAG, `Stopped server for ${launch.launchDir}`)
     }
     return NextResponse.json({ running: false, dir: launch.launchDir })
 

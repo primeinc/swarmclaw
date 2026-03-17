@@ -12,6 +12,9 @@ import {
   type GatewayFrame,
   type GatewayResponseFrame,
 } from '../gateway/protocol'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'openclaw'
 
 /**
  * OpenClaw gateway connector using the current WS protocol:
@@ -443,7 +446,7 @@ async function buildOutboundAttachments(options?: OutboundSendOptions): Promise<
       })
       return { attachments: [attachment], fallbackUrl: null }
     } catch (err) {
-      console.warn(`[openclaw] Failed to inline media URL, falling back to link send: ${getErrorMessage(err)}`)
+      log.warn(TAG, `Failed to inline media URL, falling back to link send: ${getErrorMessage(err)}`)
       return { attachments: [], fallbackUrl: mediaUrl }
     }
   }
@@ -705,8 +708,8 @@ const openclaw: PlatformConnector = {
         if (lastTickAtMs <= 0) return
         const delta = Date.now() - lastTickAtMs
         if (delta <= toleranceMs) return
-        console.error(
-          `[openclaw] Tick missed (${delta}ms > ${toleranceMs}ms), forcing reconnect`,
+        log.error(
+          TAG, `Tick missed (${delta}ms > ${toleranceMs}ms), forcing reconnect`,
         )
         try { ws.close(4000, 'tick missed') } catch { /* ignore */ }
       }, pollMs)
@@ -740,7 +743,7 @@ const openclaw: PlatformConnector = {
       const previous = historyErrorLogBySession.get(sessionKey) || 0
       if (now - previous < HISTORY_ERROR_LOG_INTERVAL_MS) return
       historyErrorLogBySession.set(sessionKey, now)
-      console.warn(`[openclaw] chat.history poll failed for "${sessionKey}": ${message}`)
+      log.warn(TAG, `chat.history poll failed for "${sessionKey}": ${message}`)
     }
 
     function cleanupSocket() {
@@ -764,7 +767,7 @@ const openclaw: PlatformConnector = {
       if (stopped) return
       const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS)
       reconnectAttempt++
-      console.log(`[openclaw] Reconnecting in ${delay}ms (attempt ${reconnectAttempt})`)
+      log.info(TAG, `Reconnecting in ${delay}ms (attempt ${reconnectAttempt})`)
       clearReconnectTimer()
       reconnectTimer = setTimeout(() => connect(), delay)
     }
@@ -838,7 +841,7 @@ const openclaw: PlatformConnector = {
       const lowerReason = (reason || '').toLowerCase()
       if (!lowerReason.includes('device token mismatch')) return
       if (!identity.deviceToken) return
-      console.warn('[openclaw] Clearing stale stored device token after mismatch')
+      log.warn(TAG, 'Clearing stale stored device token after mismatch')
       persistIdentityToken(undefined)
     }
 
@@ -918,11 +921,11 @@ const openclaw: PlatformConnector = {
           }
           if (tickWatchdogEnabled) startTickWatchdog()
           startHistoryPoller()
-          console.log(`[openclaw] Connected + authenticated (${wsUrl})`)
+          log.info(TAG, `Connected + authenticated (${wsUrl})`)
         })
         .catch((err: unknown) => {
           clearConnectHelloTimer()
-          console.error(`[openclaw] Connect handshake failed: ${getErrorMessage(err)}`)
+          log.error(TAG, `Connect handshake failed: ${getErrorMessage(err)}`)
           try { ws?.close(1008, 'connect failed') } catch { /* ignore */ }
         })
     }
@@ -962,7 +965,7 @@ const openclaw: PlatformConnector = {
         await sendChat(inbound.channelId, reply.visibleText)
       } catch (err: unknown) {
         const message = getErrorMessage(err)
-        console.error('[openclaw] Error routing inbound chat event:', message)
+        log.error(TAG, 'Error routing inbound chat event:', message)
         await sendChat(inbound.channelId, `[Error] ${message}`)
       }
     }
@@ -1025,7 +1028,7 @@ const openclaw: PlatformConnector = {
             ) {
               historyPollingUnsupported = true
               clearHistoryPollTimer()
-              console.warn('[openclaw] chat.history is unavailable; disabling history polling fallback')
+              log.warn(TAG, 'chat.history is unavailable; disabling history polling fallback')
               return
             }
             maybeLogHistoryError(sessionKey, message)
@@ -1059,18 +1062,18 @@ const openclaw: PlatformConnector = {
     function connect() {
       if (stopped) return
       cleanupSocket()
-      console.log(`[openclaw] Connecting to ${wsUrl}`)
+      log.info(TAG, `Connecting to ${wsUrl}`)
       ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
-        console.log(`[openclaw] Socket open: ${wsUrl}`)
+        log.info(TAG, `Socket open: ${wsUrl}`)
         connectSent = false
         connected = false
         lastTickAtMs = 0
         clearConnectHelloTimer()
         connectHelloTimer = setTimeout(() => {
           if (stopped || connected) return
-          console.warn(`[openclaw] Connect handshake timed out after ${CONNECT_HELLO_TIMEOUT_MS}ms`)
+          log.warn(TAG, `Connect handshake timed out after ${CONNECT_HELLO_TIMEOUT_MS}ms`)
           try { ws?.close(4001, 'connect timeout') } catch { /* ignore */ }
         }, CONNECT_HELLO_TIMEOUT_MS)
         connectHelloTimer.unref?.()
@@ -1080,7 +1083,7 @@ const openclaw: PlatformConnector = {
       ws.onmessage = (event) => {
         const frame = parseGatewayFrame(event.data)
         if (!frame) {
-          console.warn('[openclaw] Ignoring malformed gateway frame')
+          log.warn(TAG, 'Ignoring malformed gateway frame')
           return
         }
 
@@ -1124,14 +1127,14 @@ const openclaw: PlatformConnector = {
 
       ws.onclose = (event) => {
         const reason = event.reason || 'none'
-        console.log(`[openclaw] Disconnected (code=${event.code}, reason=${reason})`)
+        log.info(TAG, `Disconnected (code=${event.code}, reason=${reason})`)
         clearStaleTokenIfNeeded(reason)
         cleanupSocket()
         if (!stopped) scheduleReconnect()
       }
 
       ws.onerror = () => {
-        console.error('[openclaw] WebSocket error')
+        log.error(TAG, 'WebSocket error')
       }
     }
 
@@ -1189,7 +1192,7 @@ const openclaw: PlatformConnector = {
       async stop() {
         stopped = true
         cleanupSocket()
-        console.log('[openclaw] Connector stopped')
+        log.info(TAG, 'Connector stopped')
       },
     }
   },

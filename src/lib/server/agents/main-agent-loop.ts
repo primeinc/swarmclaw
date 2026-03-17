@@ -12,7 +12,7 @@ const MAX_PENDING_EVENTS = 16
 const MAX_TIMELINE_ITEMS = 40
 const MAX_WORKING_MEMORY_NOTES = 12
 const DEFAULT_FOLLOWUP_DELAY_MS = 1500
-const DEFAULT_MAX_FOLLOWUP_CHAIN = 6
+const DEFAULT_MAX_FOLLOWUP_CHAIN = 4
 const MAX_LIFETIME_ITERATIONS = 200
 
 export interface MainLoopState {
@@ -778,6 +778,7 @@ export function buildMainLoopHeartbeatPrompt(session: unknown, fallbackPrompt: s
     boundedFallbackPrompt ? `Base heartbeat instructions:\n${boundedFallbackPrompt}` : '',
     '',
     'You are checking the durable main mission thread for this agent.',
+    'Keep this status check brief — 5-10 tool calls maximum. Read key state, summarize progress, and report. Do not attempt fixes or deep investigation during heartbeats.',
     'Use only the current goal, plan, next action, and pending external events shown above.',
     'Do not infer or repeat old tasks from prior heartbeats.',
     'Prefer taking the single highest-value next step over restating the plan. Do not repeat completed work.',
@@ -1072,8 +1073,8 @@ export function handleMainLoopRunResult(input: HandleMainLoopRunResultInput): Ma
         || (needsReplan
           ? 'Replan from the latest outcome, then execute only the highest-value remaining step. Do not repeat completed work.'
           : state.nextAction
-            ? `Continue the objective. Resume from this next action: ${state.nextAction}`
-            : 'Continue the objective and finish the next highest-value remaining step.')
+            ? `Continue. Next action: ${state.nextAction}. Do not repeat tool calls from previous turns.`
+            : `Continue. You have used ${state.followupChainCount} of ${limit} followup turns. Focus on completing one concrete step, then summarize progress.`)
       followup = {
         message,
         delayMs: DEFAULT_FOLLOWUP_DELAY_MS,

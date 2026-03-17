@@ -11,7 +11,10 @@ import { ensureAgentThreadSession } from '@/lib/server/agents/agent-thread-sessi
 import { ensureMissionForTask, noteScheduleMissionTriggered } from '@/lib/server/missions/mission-service'
 import { hasActiveProtocolRunForSchedule, launchProtocolRunForSchedule } from '@/lib/server/protocols/protocol-service'
 import { hmrSingleton } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
 import type { Schedule } from '@/types'
+
+const TAG = 'scheduler'
 
 const TICK_INTERVAL = 60_000 // 60 seconds
 const schedulerState = hmrSingleton('__swarmclaw_scheduler_state__', () => ({
@@ -45,7 +48,7 @@ function shouldLaunchScheduleProtocol(schedule: Schedule): boolean {
 
 export function startScheduler() {
   if (schedulerState.intervalId) return
-  console.log('[scheduler] Starting scheduler engine (60s tick)')
+  log.info(TAG, 'Starting scheduler engine (60s tick)')
 
   // Compute initial nextRunAt for cron schedules missing it
   computeNextRuns()
@@ -57,7 +60,7 @@ export function stopScheduler() {
   if (schedulerState.intervalId) {
     clearInterval(schedulerState.intervalId)
     schedulerState.intervalId = null
-    console.log('[scheduler] Stopped scheduler engine')
+    log.info(TAG, 'Stopped scheduler engine')
   }
 }
 
@@ -75,7 +78,7 @@ function computeNextRuns() {
         schedule.nextRunAt = interval.next().getTime()
         changedEntries.push([schedule.id, schedule])
       } catch (err) {
-        console.error(`[scheduler] Invalid cron for ${schedule.id}:`, err)
+        log.error(TAG, `Invalid cron for ${schedule.id}:`, err)
         schedule.status = 'failed'
         changedEntries.push([schedule.id, schedule])
       }
@@ -133,7 +136,7 @@ async function tick(now = Date.now()) {
 
     const agent = agents[schedule.agentId]
     if (!agent) {
-      console.error(`[scheduler] Agent ${schedule.agentId} not found for schedule ${schedule.id}`)
+      log.error(TAG, `Agent ${schedule.agentId} not found for schedule ${schedule.id}`)
       schedule.status = 'failed'
       upsertSchedule(schedule.id, schedule)
       pushMainLoopEventToMainSessions({
@@ -143,7 +146,7 @@ async function tick(now = Date.now()) {
       continue
     }
     if (isAgentDisabled(agent)) {
-      console.warn(`[scheduler] Skipping schedule "${schedule.name}" (${schedule.id}) because agent ${schedule.agentId} is disabled`)
+      log.warn(TAG, `Skipping schedule "${schedule.name}" (${schedule.id}) because agent ${schedule.agentId} is disabled`)
       advanceSchedule(schedule)
       upsertSchedule(schedule.id, schedule)
       pushMainLoopEventToMainSessions({
@@ -153,7 +156,7 @@ async function tick(now = Date.now()) {
       continue
     }
 
-    console.log(`[scheduler] Firing schedule "${schedule.name}" (${schedule.id})`)
+    log.info(TAG, `Firing schedule "${schedule.name}" (${schedule.id})`)
     schedule.lastRunAt = now
     schedule.runNumber = (schedule.runNumber || 0) + 1
     // Compute next run

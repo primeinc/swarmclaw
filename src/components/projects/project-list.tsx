@@ -58,8 +58,10 @@ export function ProjectList() {
     }
     for (const t of Object.values(tasks)) {
       if (t.projectId && map[t.projectId]) {
-        map[t.projectId].tasks++
-        if (t.status === 'completed') map[t.projectId].completedTasks++
+        if (t.status !== 'cancelled' && t.status !== 'archived') {
+          map[t.projectId].tasks++
+          if (t.status === 'completed') map[t.projectId].completedTasks++
+        }
         if (t.updatedAt && t.updatedAt > map[t.projectId].lastActivity) {
           map[t.projectId].lastActivity = t.updatedAt
         }

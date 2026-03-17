@@ -71,9 +71,9 @@ const DEFAULT_THRESHOLDS: LoopDetectionThresholds = {
   pollCritical: 8,
   pingPongWarn: 3,
   pingPongCritical: 5,
-  circuitBreaker: 20,
-  toolFrequencyWarn: 15,
-  toolFrequencyCritical: 30,
+  circuitBreaker: 15,
+  toolFrequencyWarn: 12,
+  toolFrequencyCritical: 25,
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +180,11 @@ export class ToolLoopTracker {
     this.history = []
     this.nameCount.clear()
     this.keyCount.clear()
+  }
+
+  /** Partial reset: clear per-tool frequency counts but preserve circuit breaker and repeat history. */
+  resetFrequencyCounts(): void {
+    this.nameCount.clear()
   }
 
   /** Get the full call history (for diagnostics). */

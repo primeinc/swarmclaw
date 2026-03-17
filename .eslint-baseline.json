@@ -1,21 +1,14 @@
 {
   "version": 1,
-  "generatedAt": "2026-03-17T14:57:38.193Z",
-  "totalIssues": 440,
-  "uniqueIssues": 152,
+  "generatedAt": "2026-03-17T17:56:39.080Z",
+  "totalIssues": 414,
+  "uniqueIssues": 128,
   "issues": [
     {
       "filePath": "bin/worker-cmd.js",
       "ruleId": "@typescript-eslint/no-require-imports",
       "severity": 2,
       "message": "A `require()` style import is forbidden.",
-      "count": 2
-    },
-    {
-      "filePath": "src/app/api/chats/[id]/deploy/route.ts",
-      "ruleId": "@typescript-eslint/no-explicit-any",
-      "severity": 2,
-      "message": "Unexpected any. Specify a different type.",
       "count": 2
     },
     {
@@ -222,41 +215,6 @@
       "count": 6
     },
     {
-      "filePath": "src/components/agents/agent-files-editor.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/agents/personality-builder.tsx",
-      "ruleId": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'_agentId' is defined but never used.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/agents/personality-builder.tsx",
-      "ruleId": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'api' is defined but never used.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/agents/personality-builder.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/agents/trash-list.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'loadTrashedAgents'. Either include it or remove the dependency array.",
-      "count": 1
-    },
-    {
       "filePath": "src/components/chat/chat-preview-panel.tsx",
       "ruleId": "@next/next/no-img-element",
       "severity": 1,
@@ -271,27 +229,6 @@
       "count": 1
     },
     {
-      "filePath": "src/components/chat/message-list.tsx",
-      "ruleId": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'currentMoment' is assigned a value but never used.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/chat/message-list.tsx",
-      "ruleId": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'LastMessageMomentOverlayProps' is defined but never used.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/chat/message-list.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 2
-    },
-    {
       "filePath": "src/components/chat/swarm-panel.tsx",
       "ruleId": "@typescript-eslint/no-unused-vars",
       "severity": 1,
@@ -304,55 +241,6 @@
       "severity": 2,
       "message": "Unexpected any. Specify a different type.",
       "count": 3
-    },
-    {
-      "filePath": "src/components/chat/swarm-status-card.tsx",
-      "ruleId": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'useCallback' is defined but never used.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/chat/swarm-status-card.tsx",
-      "ruleId": "@typescript-eslint/no-explicit-any",
-      "severity": 2,
-      "message": "Unexpected any. Specify a different type.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/chat/swarm-status-card.tsx",
-      "ruleId": "react-hooks/purity",
-      "severity": 2,
-      "message": "Error: Cannot call impure function during render `Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/layout/daemon-indicator.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/layout/update-banner.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/logs/log-list.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'loadAgents'. Either include it or remove the dependency array.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/memory/memory-card.tsx",
-      "ruleId": "react-hooks/purity",
-      "severity": 2,
-      "message": "Error: Cannot call impure function during render `Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).",
-      "count": 1
     },
     {
       "filePath": "src/components/memory/memory-detail.tsx",
@@ -376,27 +264,6 @@
       "count": 1
     },
     {
-      "filePath": "src/components/secrets/secret-sheet.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'loadAgents'. Either include it or remove the dependency array.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/secrets/secrets-list.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'loadSecrets'. Either include it or remove the dependency array.",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/shared/agent-switch-dialog.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 1
-    },
-    {
       "filePath": "src/components/shared/attachment-chip.tsx",
       "ruleId": "@next/next/no-img-element",
       "severity": 1,
@@ -404,24 +271,10 @@
       "count": 2
     },
     {
-      "filePath": "src/components/shared/dir-browser.tsx",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
-      "count": 1
-    },
-    {
       "filePath": "src/components/shared/file-preview.tsx",
       "ruleId": "@next/next/no-img-element",
       "severity": 1,
       "message": "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/skills/skill-sheet.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'editing'. Either include it or remove the dependency array.",
       "count": 1
     },
     {
@@ -439,31 +292,10 @@
       "count": 1
     },
     {
-      "filePath": "src/components/tasks/task-list.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'loadTasks'. Either include it or remove the dependency array.",
-      "count": 1
-    },
-    {
       "filePath": "src/components/tasks/task-sheet.tsx",
       "ruleId": "@next/next/no-img-element",
       "severity": 1,
       "message": "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element",
-      "count": 1
-    },
-    {
-      "filePath": "src/components/tasks/task-sheet.tsx",
-      "ruleId": "react-hooks/exhaustive-deps",
-      "severity": 1,
-      "message": "React Hook useEffect has a missing dependency: 'agentList'. Either include it or remove the dependency array.",
-      "count": 1
-    },
-    {
-      "filePath": "src/hooks/use-openclaw-gateway.ts",
-      "ruleId": "react-hooks/set-state-in-effect",
-      "severity": 2,
-      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following: * Update external systems with the latest state from React. * Subscribe for updates from some external system, calling setState in a callback function when external state changes. Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).",
       "count": 1
     },
     {
@@ -521,6 +353,13 @@
       "severity": 2,
       "message": "Unexpected any. Specify a different type.",
       "count": 22
+    },
+    {
+      "filePath": "src/lib/server/chat-execution/stream-agent-chat.ts",
+      "ruleId": "no-console",
+      "severity": 1,
+      "message": "Unexpected console statement.",
+      "count": 1
     },
     {
       "filePath": "src/lib/server/connectors/discord.ts",
@@ -633,13 +472,6 @@
       "severity": 2,
       "message": "Unexpected any. Specify a different type.",
       "count": 10
-    },
-    {
-      "filePath": "src/lib/server/connectors/whatsapp.ts",
-      "ruleId": "react-hooks/rules-of-hooks",
-      "severity": 2,
-      "message": "React Hook \"useMultiFileAuthState\" is called in function \"start\" that is neither a React function component nor a custom React Hook function. React component names must start with an uppercase letter. React Hook names must start with the word \"use\".",
-      "count": 1
     },
     {
       "filePath": "src/lib/server/evm-swap.ts",

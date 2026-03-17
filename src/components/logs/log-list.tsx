@@ -67,7 +67,7 @@ export function LogList() {
   useEffect(() => {
     fetchLogs()
     loadAgents()
-  }, [fetchLogs])
+  }, [fetchLogs, loadAgents])
 
   useWs('logs', fetchLogs, autoRefresh ? 3000 : undefined)
 

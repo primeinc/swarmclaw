@@ -3,6 +3,9 @@
  */
 
 import { sleep, jitteredBackoff } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'tool-retry'
 
 export interface RetryOptions {
   maxAttempts?: number
@@ -51,9 +54,7 @@ export async function withRetry<TArgs>(
     if (attempt < maxAttempts && isRetryableError(lastResult, retryable)) {
       await opts?.onRetry?.(attempt, lastResult)
       const delay = jitteredBackoff(backoffMs, attempt - 1, backoffMs * 16)
-      console.warn(
-        `[tool-retry] Attempt ${attempt}/${maxAttempts} matched retryable pattern, retrying in ${delay}ms`,
-      )
+      log.warn(TAG, `Attempt ${attempt}/${maxAttempts} matched retryable pattern, retrying in ${delay}ms`)
       await sleep(delay)
       continue
     }

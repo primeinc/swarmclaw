@@ -164,6 +164,7 @@ export function extractResumeIdentifier(text: string): string | null {
   return null
 }
 
+const BINARY_LOOKUP_CACHE_MAX = 100
 const binaryLookupCache = new Map<string, { checkedAt: number; path: string | null }>()
 const BINARY_LOOKUP_TTL_MS = 30_000
 const isWindows = process.platform === 'win32'
@@ -172,6 +173,19 @@ export function findBinaryOnPath(binaryName: string): string | null {
   const now = Date.now()
   const cached = binaryLookupCache.get(binaryName)
   if (cached && now - cached.checkedAt < BINARY_LOOKUP_TTL_MS) return cached.path
+
+  // Prune expired + cap
+  for (const [k, v] of binaryLookupCache) {
+    if (now - v.checkedAt > BINARY_LOOKUP_TTL_MS) binaryLookupCache.delete(k)
+  }
+  if (binaryLookupCache.size > BINARY_LOOKUP_CACHE_MAX) {
+    const excess = binaryLookupCache.size - BINARY_LOOKUP_CACHE_MAX
+    const iter = binaryLookupCache.keys()
+    for (let i = 0; i < excess; i++) {
+      const k = iter.next().value
+      if (k !== undefined) binaryLookupCache.delete(k)
+    }
+  }
 
   const { spawnSync } = require('child_process')
   const probe = isWindows

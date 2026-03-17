@@ -1,8 +1,11 @@
+import { log } from '@/lib/server/logger'
 import { spawn, execSync } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import type { Connector } from '@/types'
 import type { PlatformConnector, ConnectorInstance, InboundMessage, ConnectorIngressResult } from './types'
 import { resolveConnectorIngressReply } from './ingress-delivery'
+
+const TAG = 'signal'
 
 const signal: PlatformConnector = {
   async start(connector, _botToken, onMessage): Promise<ConnectorInstance> {
@@ -43,16 +46,16 @@ const signal: PlatformConnector = {
 
       daemonProc.stderr?.on('data', (chunk: Buffer) => {
         const msg = chunk.toString().trim()
-        if (msg) console.error(`[signal] stderr: ${msg}`)
+        if (msg) log.error(TAG, `stderr: ${msg}`)
       })
 
       daemonProc.on('exit', (code) => {
         if (!stopped) {
-          console.error(`[signal] daemon exited unexpectedly with code ${code}`)
+          log.error(TAG, `daemon exited unexpectedly with code ${code}`)
         }
       })
 
-      console.log(`[signal] Daemon started in stdio mode for ${phoneNumber}`)
+      log.info(TAG, `Daemon started in stdio mode for ${phoneNumber}`)
     } else if (mode === 'http') {
       // Poll the signal-cli REST API for incoming messages
       const pollInterval = 2000
@@ -74,7 +77,7 @@ const signal: PlatformConnector = {
       }
 
       pollTimer = setInterval(poll, pollInterval)
-      console.log(`[signal] Polling ${httpUrl} for ${phoneNumber} every ${pollInterval}ms`)
+      log.info(TAG, `Polling ${httpUrl} for ${phoneNumber} every ${pollInterval}ms`)
     } else {
       throw new Error(`Unknown signalCliMode: ${mode}. Use 'stdio' or 'http'.`)
     }
@@ -119,7 +122,7 @@ const signal: PlatformConnector = {
           daemonProc.kill('SIGTERM')
           daemonProc = null
         }
-        console.log(`[signal] Connector stopped for ${phoneNumber}`)
+        log.info(TAG, `Connector stopped for ${phoneNumber}`)
       },
     }
   },
@@ -177,7 +180,7 @@ export async function handleSignalEvent(
       )
     }
   } catch (err: any) {
-    console.error(`[signal] Error handling message:`, err.message)
+    log.error(TAG, 'Error handling message:', err.message)
   }
 }
 

@@ -5,6 +5,9 @@
  * can recall cross-context conversations (chatroom ↔ direct chat).
  */
 import type { Agent } from '@/types'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'chatroom-memory-bridge'
 
 /** Truncate text to a max length, collapsing whitespace */
 function truncate(text: string, max: number): string {
@@ -58,7 +61,7 @@ export async function persistChatroomInteractionMemory(params: {
     })
   } catch (err: unknown) {
     // Non-critical — log and continue
-    console.warn('[chatroom-memory-bridge] Failed to persist interaction memory:', err instanceof Error ? err.message : String(err))
+    log.warn(TAG, 'Failed to persist interaction memory:', err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -126,9 +129,9 @@ export async function summarizeAndConsolidateChatroomMemories(params: {
       })
     } catch (llmErr: unknown) {
       // LLM summarization is best-effort
-      console.warn('[chatroom-memory-bridge] LLM summarization failed:', llmErr instanceof Error ? llmErr.message : String(llmErr))
+      log.warn(TAG, 'LLM summarization failed:', llmErr instanceof Error ? llmErr.message : String(llmErr))
     }
   } catch (err: unknown) {
-    console.warn('[chatroom-memory-bridge] Failed to consolidate memories:', err instanceof Error ? err.message : String(err))
+    log.warn(TAG, 'Failed to consolidate memories:', err instanceof Error ? err.message : String(err))
   }
 }

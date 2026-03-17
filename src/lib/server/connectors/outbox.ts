@@ -6,6 +6,9 @@ import {
 } from '../storage'
 import { notify } from '../ws-hub'
 import { errorMessage, hmrSingleton } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'connector-outbox'
 
 
 export type ConnectorOutboxStatus =
@@ -151,7 +154,7 @@ function scheduleTimer(delayMs: number): void {
     outboxState.timer = null
     outboxState.dueAt = null
     void runConnectorOutboxNow().catch((err: unknown) => {
-      console.warn(`[connector-outbox] Worker tick failed: ${errorMessage(err)}`)
+      log.warn(TAG, `Worker tick failed: ${errorMessage(err)}`)
     })
   }, Math.max(0, delayMs))
   outboxState.timer.unref?.()

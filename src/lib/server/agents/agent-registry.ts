@@ -52,9 +52,22 @@ export function getAgentDirectory(excludeId?: string): AgentDirectoryEntry[] {
   return entries
 }
 
-export function buildAgentAwarenessBlock(excludeId: string): string {
-  const directory = getAgentDirectory(excludeId)
+export function buildAgentAwarenessBlock(
+  excludeId: string,
+  opts?: {
+    delegationTargetMode?: 'all' | 'selected'
+    delegationTargetAgentIds?: string[]
+  },
+): string {
+  let directory = getAgentDirectory(excludeId)
   if (!directory.length) return ''
+
+  const isFiltered = opts?.delegationTargetMode === 'selected'
+  if (isFiltered) {
+    const allowedIds = new Set(opts.delegationTargetAgentIds || [])
+    directory = directory.filter((entry) => allowedIds.has(entry.id))
+    if (!directory.length) return ''
+  }
 
   const lines = directory.map((entry) => {
     const caps = entry.capabilities.length ? ` (${entry.capabilities.join(', ')})` : ''
@@ -62,9 +75,13 @@ export function buildAgentAwarenessBlock(excludeId: string): string {
     return `- **${entry.name}** [id: ${entry.id}]${caps} — ${status}`
   })
 
+  const header = isFiltered
+    ? 'These are the ONLY agents I can delegate tasks to. Do not attempt to delegate to any other agents:'
+    : 'These are the other agents I work alongside. I can hand off tasks to any of them if their skills are a better fit:'
+
   return [
     '## My Colleagues',
-    'These are the other agents I work alongside. I can hand off tasks to any of them if their skills are a better fit:',
+    header,
     ...lines,
   ].join('\n')
 }

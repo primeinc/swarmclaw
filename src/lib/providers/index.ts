@@ -8,7 +8,10 @@ import { streamAnthropicChat } from './anthropic'
 import { streamOpenClawChat } from './openclaw'
 import { errorMessage, sleep, jitteredBackoff } from '@/lib/shared-utils'
 import { classifyProviderError } from './error-classification'
+import { log } from '@/lib/server/logger'
 import type { ProviderInfo, ProviderConfig as CustomProviderConfig, ProviderType } from '../../types'
+
+const TAG = 'providers'
 
 export interface ProviderHandler {
   streamChat: (opts: StreamChatOptions) => Promise<string>
@@ -439,7 +442,7 @@ export async function streamChatWithFailover(
       if (classified.reason === 'auth_permanent') throw err
 
       if (i < credentialIds.length - 1) {
-        console.log(`[failover] Credential ${credId} failed (${classified.reason}: ${errMessage?.slice(0, 80)}), trying fallback...`)
+        log.info(TAG, `Credential ${credId} failed (${classified.reason}: ${errMessage?.slice(0, 80)}), trying fallback...`)
         opts.write(`data: ${JSON.stringify({
           t: 'md',
           text: JSON.stringify({ failover: { from: credId, reason: errMessage?.slice(0, 100) } }),

@@ -143,9 +143,10 @@ function checkLoopDetection(ctx: ContinuationContext): ContinuationDecision | nu
     }
   }
 
-  // Terminal — caller should break
-  const errMessage = ctx.state.loopDetectionTriggered?.message || 'Tool frequency limit exceeded.'
-  ctx.write(`data: ${JSON.stringify({ t: 'err', text: errMessage })}\n\n`) // err, not status
+  // Terminal — caller should break.
+  // Emit a user-friendly message instead of the raw diagnostic (which is internal).
+  // The structured diagnostic data is already carried via the `status` event in iteration-event-handler.
+  ctx.write(`data: ${JSON.stringify({ t: 'err', text: 'The agent got stuck in a repetitive loop and has been stopped. Please try rephrasing your request or breaking it into smaller steps.' })}\n\n`)
   return { type: false, requiredToolReminderNames: [] }
 }
 

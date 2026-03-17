@@ -57,6 +57,8 @@ import {
 export type { ToolContext, SessionToolsResult }
 export { sweepOrphanedBrowsers, cleanupSessionBrowser, getActiveBrowserCount, hasActiveBrowser }
 
+const TAG = 'session-tools'
+
 const DELEGATION_TOOL_NAMES = new Set([
   'delegate',
   'spawn_subagent',
@@ -455,7 +457,7 @@ export async function buildSessionTools(cwd: string, enabledExtensions: string[]
       abortSignalRef,
     }
   } catch (err: any) {
-    console.error('[session-tools] buildSessionTools critical failure:', err.message)
+    log.error(TAG, 'buildSessionTools critical failure:', err.message)
     throw err
   }
 }

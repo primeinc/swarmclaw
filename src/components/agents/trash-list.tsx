@@ -12,7 +12,7 @@ export function TrashList() {
   const loadAgents = useAppStore((s) => s.loadAgents)
   const [confirmPermanent, setConfirmPermanent] = useState<Agent | null>(null)
 
-  useEffect(() => { loadTrashedAgents() }, [])  
+  useEffect(() => { loadTrashedAgents() }, [loadTrashedAgents])
 
   const handleRestore = async (id: string) => {
     await api('POST', '/agents/trash', { id })

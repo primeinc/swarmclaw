@@ -14,15 +14,32 @@ interface ProviderHealthState {
 const states: Map<string, ProviderHealthState> =
   hmrSingleton('__swarmclaw_provider_health__', () => new Map<string, ProviderHealthState>())
 
+const CLI_CHECK_CACHE_MAX = 100
 const cliCheckCache = new Map<string, { at: number; ok: boolean }>()
 const delegateReadyCache = new Map<string, { at: number; ok: boolean }>()
 const CLI_CHECK_TTL_MS = 30_000
 const isWindows = process.platform === 'win32'
 
+function pruneTTLCache(cache: Map<string, { at: number }>, ttlMs: number, maxSize: number): void {
+  const now = Date.now()
+  for (const [k, v] of cache) {
+    if (now - v.at > ttlMs) cache.delete(k)
+  }
+  if (cache.size > maxSize) {
+    const excess = cache.size - maxSize
+    const iter = cache.keys()
+    for (let i = 0; i < excess; i++) {
+      const k = iter.next().value
+      if (k !== undefined) cache.delete(k)
+    }
+  }
+}
+
 function commandExists(binary: string): boolean {
   const now = Date.now()
   const cached = cliCheckCache.get(binary)
   if (cached && now - cached.at < CLI_CHECK_TTL_MS) return cached.ok
+  pruneTTLCache(cliCheckCache, CLI_CHECK_TTL_MS, CLI_CHECK_CACHE_MAX)
   const probe = isWindows
     ? spawnSync('where', [binary], { timeout: 2000, stdio: 'pipe' })
     : spawnSync('/bin/zsh', ['-lc', `command -v ${binary} >/dev/null 2>&1`], { timeout: 2000 })
@@ -108,6 +125,7 @@ function delegateToolReady(delegateTool: DelegateTool): boolean {
   const now = Date.now()
   const cached = delegateReadyCache.get(delegateTool)
   if (cached && now - cached.at < CLI_CHECK_TTL_MS) return cached.ok
+  pruneTTLCache(delegateReadyCache, CLI_CHECK_TTL_MS, CLI_CHECK_CACHE_MAX)
 
   const binary = delegateBinary(delegateTool)
   let ok = commandExists(binary)

@@ -452,6 +452,8 @@ export interface Session {
   theme?: string
   avatar?: string
   canvasContent?: CanvasContent
+  /** Tracks how many times each memory ID has been injected via proactive recall in this session. */
+  injectedMemoryIds?: Record<string, number>
 }
 
 export type Sessions = Record<string, Session>
@@ -1545,6 +1547,7 @@ export interface MemoryEntry {
   lastAccessedAt?: number
   contentHash?: string
   reinforcementCount?: number
+  abstract?: string | null
   createdAt: number
   updatedAt: number
 }
@@ -2147,6 +2150,9 @@ export interface SessionRunRecord {
   recoveredFromRestart?: boolean
   recoveredFromRunId?: string
   recoveryPayload?: SessionRunRecoveryPayload
+  totalInputTokens?: number
+  totalOutputTokens?: number
+  estimatedCost?: number
 }
 
 export interface SessionQueuedTurn {

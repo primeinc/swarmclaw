@@ -1,5 +1,8 @@
 import { loadAgents, loadSettings, loadCredentials, decryptKey } from './storage'
 import { getProvider } from '../providers'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'query-expansion'
 
 /**
  * Expands a single user query into multiple semantic search variants
@@ -58,7 +61,7 @@ Format your response as a simple newline-separated list. No numbering, no bullet
       return [query, ...variants.slice(0, 3)]
     }
   } catch (err) {
-    console.error('[query-expansion] Failed to expand query:', err)
+    log.error(TAG, 'Failed to expand query:', err)
   }
 
   return [query]

@@ -2,6 +2,9 @@ import { genId } from '@/lib/id'
 import { hmrSingleton, sleep } from '@/lib/shared-utils'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { detectDocker } from '@/lib/server/sandbox/docker-detect'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'process-manager'
 
 const MAX_LOG_CHARS = 200_000
 const DEFAULT_BACKGROUND_YIELD_MS = 10_000
@@ -127,9 +130,9 @@ function cleanupSandboxContainer(containerName: string) {
   if (!detectDocker().available) return
   try {
     const child = spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore', detached: true })
-    child.on('error', (err) => { console.warn(`[process-manager] Docker cleanup error for ${containerName}:`, err.message) })
+    child.on('error', (err) => { log.warn(TAG, `Docker cleanup error for ${containerName}:`, err.message) })
     child.unref()
-  } catch (err: unknown) { console.warn(`[process-manager] Docker cleanup spawn failed for ${containerName}:`, err instanceof Error ? err.message : String(err)) }
+  } catch (err: unknown) { log.warn(TAG, `Docker cleanup spawn failed for ${containerName}:`, err instanceof Error ? err.message : String(err)) }
 }
 
 function normalizeLines(text: string): string[] {
@@ -264,7 +267,7 @@ export async function startManagedProcess(opts: StartProcessOptions): Promise<St
     try { child.kill('SIGTERM') } catch { /* noop */ }
     const escalationTimer = setTimeout(() => {
       if (!state.children.has(id)) return
-      console.warn(`[process-manager] Process ${id} (pid=${rec.pid}) did not exit after SIGTERM, sending SIGKILL`)
+      log.warn(TAG, `Process ${id} (pid=${rec.pid}) did not exit after SIGTERM, sending SIGKILL`)
       appendLog(id, '\n[process] SIGKILL escalation — process ignored SIGTERM.\n')
       try { child.kill('SIGKILL') } catch { /* noop */ }
     }, SIGKILL_ESCALATION_MS)
@@ -491,7 +494,7 @@ export async function reapOrphanedSandboxContainers(): Promise<number> {
         (r) => r.sandboxContainerName === name && r.status === 'running',
       )
       if (!isTracked) {
-        console.warn(`[process-manager] Reaping orphaned sandbox container: ${name}`)
+        log.warn(TAG, `Reaping orphaned sandbox container: ${name}`)
         cleanupSandboxContainer(name)
         reaped++
       }

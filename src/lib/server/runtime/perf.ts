@@ -15,6 +15,9 @@
  */
 
 import { hmrSingleton } from '@/lib/shared-utils'
+import { log } from '@/lib/server/logger'
+
+const TAG = 'perf'
 
 interface PerfEntry {
   category: string
@@ -44,7 +47,7 @@ function emitEntry(entry: PerfEntry): void {
   const metaStr = entry.meta && Object.keys(entry.meta).length > 0
     ? ' ' + JSON.stringify(entry.meta)
     : ''
-  console.log(`[perf] ${entry.category}/${entry.label} ${entry.durationMs}ms${metaStr}`)
+  log.info(TAG, `${entry.category}/${entry.label} ${entry.durationMs}ms${metaStr}`)
 }
 
 const _noopEnd = () => 0

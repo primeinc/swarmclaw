@@ -1,9 +1,12 @@
+import { log } from '@/lib/server/logger'
 import fs from 'node:fs'
 import path from 'node:path'
 import { decryptKey, loadCredentials, loadSettings } from '../storage'
 import { mimeFromPath } from './media'
 import type { InboundMessage, InboundMedia } from './types'
 import { errorMessage } from '@/lib/shared-utils'
+
+const TAG = 'audio-transcription'
 
 const PLACEHOLDER_TEXT = new Set([
   '',
@@ -250,11 +253,11 @@ export async function enrichInboundMessageWithAudioTranscript(params: {
     try {
       const transcript = (await attempt.run()).replace(/\s+/g, ' ').trim()
       if (!transcript) continue
-      console.log(`[connector] Inbound audio transcribed via ${attempt.provider}: ${path.basename(localPath)}`)
+      log.info(TAG, `Inbound audio transcribed via ${attempt.provider}: ${path.basename(localPath)}`)
       return { ...msg, text: transcript }
     } catch (err: unknown) {
       const reason = errorMessage(err)
-      console.warn(`[connector] Inbound audio transcription failed via ${attempt.provider}: ${reason}`)
+      log.warn(TAG, `Inbound audio transcription failed via ${attempt.provider}: ${reason}`)
     }
   }
 
