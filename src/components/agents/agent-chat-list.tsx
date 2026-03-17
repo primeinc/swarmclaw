@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/stores/use-app-store'
 import { useChatStore } from '@/stores/use-chat-store'
 import { useChatroomStore } from '@/stores/use-chatroom-store'
@@ -35,7 +36,13 @@ export function AgentChatList({ inSidebar, onSelect }: Props) {
   const togglePinAgent = useAppStore((s) => s.togglePinAgent)
   const appSettings = useAppStore((s) => s.appSettings)
   const updateSettings = useAppStore((s) => s.updateSettings)
-  const streamingSessionId = useChatStore((s) => s.streamingSessionId)
+  const { streamingSessionId, streamPhase, streamToolName } = useChatStore(
+    useShallow((s) => ({
+      streamingSessionId: s.streamingSessionId,
+      streamPhase: s.streamPhase,
+      streamToolName: s.streamToolName,
+    })),
+  )
   const chatFilter = useAppStore((s) => s.chatFilter ?? 'all')
   const setChatFilter = useAppStore((s) => s.setChatFilter)
   const chatrooms = useChatroomStore((s) => s.chatrooms)
@@ -352,13 +359,17 @@ export function AgentChatList({ inSidebar, onSelect }: Props) {
                       </span>
                     </div>
                     {isTyping ? (
-                      <div className="text-[12px] text-accent-bright/80 mt-1 flex items-center gap-1.5">
+                      <div className={`text-[12px] mt-1 flex items-center gap-1.5 ${streamPhase === 'queued' ? 'text-amber-300/80' : 'text-accent-bright/80'}`}>
                         <span className="flex gap-0.5">
-                          <span className="w-1 h-1 rounded-full bg-accent-bright/70 animate-bounce [animation-delay:0ms]" />
-                          <span className="w-1 h-1 rounded-full bg-accent-bright/70 animate-bounce [animation-delay:150ms]" />
-                          <span className="w-1 h-1 rounded-full bg-accent-bright/70 animate-bounce [animation-delay:300ms]" />
+                          <span className={`w-1 h-1 rounded-full animate-bounce [animation-delay:0ms] ${streamPhase === 'queued' ? 'bg-amber-400/70' : 'bg-accent-bright/70'}`} />
+                          <span className={`w-1 h-1 rounded-full animate-bounce [animation-delay:150ms] ${streamPhase === 'queued' ? 'bg-amber-400/70' : 'bg-accent-bright/70'}`} />
+                          <span className={`w-1 h-1 rounded-full animate-bounce [animation-delay:300ms] ${streamPhase === 'queued' ? 'bg-amber-400/70' : 'bg-accent-bright/70'}`} />
                         </span>
-                        Typing...
+                        {streamPhase === 'queued' ? 'Queued...'
+                          : streamPhase === 'tool' && streamToolName ? `Using ${streamToolName}...`
+                          : streamPhase === 'responding' ? 'Responding...'
+                          : streamPhase === 'connecting' ? 'Reconnecting...'
+                          : 'Thinking...'}
                       </div>
                     ) : (
                       <div className="text-[12px] text-text-3/70 mt-1 truncate">
@@ -504,13 +515,17 @@ export function AgentChatList({ inSidebar, onSelect }: Props) {
                     </button>
                   </div>
                   {isTyping ? (
-                    <div className="text-[12px] text-accent-bright/70 mt-0.5 flex items-center gap-1.5">
+                    <div className={`text-[12px] mt-0.5 flex items-center gap-1.5 ${streamPhase === 'queued' ? 'text-amber-300/70' : 'text-accent-bright/70'}`}>
                       <span className="flex gap-0.5">
-                        <span className="w-1 h-1 rounded-full bg-accent-bright/70 animate-bounce [animation-delay:0ms]" />
-                        <span className="w-1 h-1 rounded-full bg-accent-bright/70 animate-bounce [animation-delay:150ms]" />
-                        <span className="w-1 h-1 rounded-full bg-accent-bright/70 animate-bounce [animation-delay:300ms]" />
+                        <span className={`w-1 h-1 rounded-full animate-bounce [animation-delay:0ms] ${streamPhase === 'queued' ? 'bg-amber-400/70' : 'bg-accent-bright/70'}`} />
+                        <span className={`w-1 h-1 rounded-full animate-bounce [animation-delay:150ms] ${streamPhase === 'queued' ? 'bg-amber-400/70' : 'bg-accent-bright/70'}`} />
+                        <span className={`w-1 h-1 rounded-full animate-bounce [animation-delay:300ms] ${streamPhase === 'queued' ? 'bg-amber-400/70' : 'bg-accent-bright/70'}`} />
                       </span>
-                      Typing...
+                      {streamPhase === 'queued' ? 'Queued...'
+                        : streamPhase === 'tool' && streamToolName ? `Using ${streamToolName}...`
+                        : streamPhase === 'responding' ? 'Responding...'
+                        : streamPhase === 'connecting' ? 'Reconnecting...'
+                        : 'Thinking...'}
                     </div>
                   ) : preview ? (
                     <div className="text-[12px] text-text-3/70 mt-0.5 truncate">

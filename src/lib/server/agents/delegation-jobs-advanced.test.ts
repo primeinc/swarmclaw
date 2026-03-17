@@ -305,7 +305,7 @@ describe('delegation-jobs-advanced', () => {
     // Only jobs without runtime handles should be recovered.
     // Note: other running jobs from previous tests may also be recovered,
     // so we check >= 2 rather than exactly 2.
-    const recovered = delegationJobs.recoverStaleDelegationJobs(-1)
+    const recovered = delegationJobs.recoverStaleDelegationJobs({ maxAgeMs: -1 })
 
     // At least the 2 stale jobs without handles should be failed
     assert.ok(recovered >= 2, `Expected at least 2 recovered, got ${recovered}`)

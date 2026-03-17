@@ -182,12 +182,23 @@ describe('shouldReplaceRecentAssistantMessage', () => {
     }), false)
   })
 
-  it('returns false when no tool events in new message', () => {
+  it('returns true when no tool events in either message (continuation replacement)', () => {
+    const now = Date.now()
     assert.equal(shouldReplaceRecentAssistantMessage({
-      previous: { role: 'assistant', text: 'hi', time: Date.now() },
+      previous: { role: 'assistant', text: 'You', time: now - 2000 },
       nextToolEvents: [],
       nextKind: 'chat',
-      now: Date.now(),
+      now,
+    }), true)
+  })
+
+  it('returns false when previous has tool events and next has none', () => {
+    const now = Date.now()
+    assert.equal(shouldReplaceRecentAssistantMessage({
+      previous: { role: 'assistant', text: 'done', time: now - 2000, toolEvents: [{ name: 'shell', input: 'ls' }] },
+      nextToolEvents: [],
+      nextKind: 'chat',
+      now,
     }), false)
   })
 

@@ -5,6 +5,8 @@ import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { AgentPickerList } from '@/components/shared/agent-picker-list'
 import { resolveTeamColor } from '@/lib/org-chart'
 import type { Agent } from '@/types'
+import { WORKER_ONLY_PROVIDER_IDS } from '@/lib/provider-sets'
+import { isOrchestratorProviderEligible } from '@/lib/orchestrator-config'
 
 const TEAM_COLORS = [
   '#6366F1', '#8B5CF6', '#EC4899', '#EF4444',
@@ -82,6 +84,7 @@ export function OrgChartDetailPanel({
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto overscroll-contain p-4 flex flex-col gap-4" onWheel={(e) => e.stopPropagation()}>
         {/* Role toggle */}
+        {!WORKER_ONLY_PROVIDER_IDS.has(agent.provider) && (
         <Section label="Role">
           <div className="flex gap-1">
             {(['worker', 'coordinator'] as const).map((r) => (
@@ -99,6 +102,7 @@ export function OrgChartDetailPanel({
             ))}
           </div>
         </Section>
+        )}
 
         {/* Delegation */}
         {role === 'coordinator' && (
@@ -163,6 +167,39 @@ export function OrgChartDetailPanel({
               </>
             )}
           </>
+        )}
+
+        {/* Orchestrator */}
+        {isOrchestratorProviderEligible(agent.provider) && (
+          <Section label="Orchestrator">
+            <div className="flex gap-1">
+              <button
+                onClick={() => patchAgent({ orchestratorEnabled: true })}
+                className={`flex-1 text-[11px] font-500 py-1.5 rounded-[6px] border transition-colors cursor-pointer ${
+                  agent.orchestratorEnabled
+                    ? 'border-amber-400/30 text-amber-400 bg-amber-400/10'
+                    : 'border-white/[0.06] text-text-3 bg-transparent hover:bg-white/[0.04]'
+                }`}
+              >
+                On
+              </button>
+              <button
+                onClick={() => patchAgent({ orchestratorEnabled: false })}
+                className={`flex-1 text-[11px] font-500 py-1.5 rounded-[6px] border transition-colors cursor-pointer ${
+                  !agent.orchestratorEnabled
+                    ? 'border-amber-400/30 text-amber-400 bg-amber-400/10'
+                    : 'border-white/[0.06] text-text-3 bg-transparent hover:bg-white/[0.04]'
+                }`}
+              >
+                Off
+              </button>
+            </div>
+            {agent.orchestratorEnabled && agent.orchestratorGovernance && (
+              <span className="text-[9px] mt-1 text-amber-400/80 block">
+                {agent.orchestratorGovernance}
+              </span>
+            )}
+          </Section>
         )}
 
         {/* Team */}

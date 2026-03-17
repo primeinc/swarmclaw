@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { Agent } from '@/types'
+import { WORKER_ONLY_PROVIDER_IDS } from '@/lib/provider-sets'
 
 interface Props {
   agent: Agent
@@ -67,14 +68,16 @@ export function OrgChartContextMenu({ agent, teamNames, x, y, onClose, onAction 
       <div className="h-px bg-white/[0.06] my-0.5" />
 
       {/* Hierarchy actions */}
-      {role === 'worker' ? (
-        <MenuBtn onClick={() => { onAction({ type: 'set_role', role: 'coordinator' }); onClose() }}>
-          Promote to Coordinator
-        </MenuBtn>
-      ) : (
-        <MenuBtn onClick={() => { onAction({ type: 'set_role', role: 'worker' }); onClose() }}>
-          Demote to Worker
-        </MenuBtn>
+      {!WORKER_ONLY_PROVIDER_IDS.has(agent.provider) && (
+        role === 'worker' ? (
+          <MenuBtn onClick={() => { onAction({ type: 'set_role', role: 'coordinator' }); onClose() }}>
+            Promote to Coordinator
+          </MenuBtn>
+        ) : (
+          <MenuBtn onClick={() => { onAction({ type: 'set_role', role: 'worker' }); onClose() }}>
+            Demote to Worker
+          </MenuBtn>
+        )
       )}
 
       {hasParent && (

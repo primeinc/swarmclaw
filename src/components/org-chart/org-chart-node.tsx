@@ -15,6 +15,7 @@ interface Props {
   isDragGhost?: boolean
   childCount?: number
   delegationInfo?: { mode: 'all' | 'selected'; count: number } | null
+  delegationGlow?: 'indigo' | 'emerald' | 'red' | null
   activeTask?: string | null
   projectName?: string | null
   lastError?: string | null
@@ -51,6 +52,7 @@ export function OrgChartNode({
   isDragGhost,
   childCount,
   delegationInfo,
+  delegationGlow,
   activeTask,
   projectName,
   lastError,
@@ -69,8 +71,22 @@ export function OrgChartNode({
   const teamColor = agent.orgChart?.teamColor
   const teamLabel = agent.orgChart?.teamLabel
   const providerLabel = agent.provider && agent.provider !== 'ollama' ? agent.provider : null
+  const glowShadow = delegationGlow === 'indigo'
+    ? '0 0 18px rgba(99,102,241,0.35), 0 0 4px rgba(99,102,241,0.2)'
+    : delegationGlow === 'emerald'
+      ? '0 0 18px rgba(52,211,153,0.35), 0 0 4px rgba(52,211,153,0.2)'
+      : delegationGlow === 'red'
+        ? '0 0 18px rgba(244,63,94,0.35), 0 0 4px rgba(244,63,94,0.2)'
+        : undefined
+  const glowBorder = delegationGlow === 'indigo'
+    ? 'rgba(99,102,241,0.4)'
+    : delegationGlow === 'emerald'
+      ? 'rgba(52,211,153,0.4)'
+      : delegationGlow === 'red'
+        ? 'rgba(244,63,94,0.4)'
+        : undefined
   const description = agent.description?.slice(0, 60) || null
-  const plugins = (agent.tools || []).slice(0, 4)
+  const tools = (agent.tools || []).slice(0, 4)
 
   return (
     <div className="group relative">
@@ -90,7 +106,8 @@ export function OrgChartNode({
         style={{
           width: 200,
           minHeight: 100,
-          ...(isTeamHighlighted && teamColor ? { boxShadow: `0 0 0 1px ${teamColor}40` } : {}),
+          ...(glowShadow ? { boxShadow: glowShadow, borderColor: glowBorder, animation: 'delegation-glow-pulse 2s ease-in-out infinite' } : {}),
+          ...(isTeamHighlighted && teamColor && !glowShadow ? { boxShadow: `0 0 0 1px ${teamColor}40` } : {}),
         }}
         onPointerDown={onPointerDown}
         onContextMenu={onContextMenu}
@@ -152,6 +169,11 @@ export function OrgChartNode({
           <span className={`text-[9px] font-600 uppercase tracking-wider px-1.5 py-0.5 rounded-[4px] leading-none ${badge.cls}`}>
             {badge.label}
           </span>
+          {agent.orchestratorEnabled && (
+            <span className="text-[9px] font-600 uppercase tracking-wider px-1.5 py-0.5 rounded-[4px] leading-none text-amber-400 bg-amber-400/15">
+              Orchestrator
+            </span>
+          )}
           {teamLabel && (
             <span
               className="text-[9px] font-500 px-1.5 py-0.5 rounded-[4px] leading-none border"
@@ -172,10 +194,10 @@ export function OrgChartNode({
           )}
         </div>
 
-        {/* Row 4: Plugins */}
-        {plugins.length > 0 && (
+        {/* Row 4: Tools */}
+        {tools.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">
-            {plugins.map((p) => (
+            {tools.map((p) => (
               <span
                 key={p}
                 className="text-[8px] text-text-3/50 bg-white/[0.03] border border-white/[0.05] rounded-[3px] px-1 py-[1px] leading-none"

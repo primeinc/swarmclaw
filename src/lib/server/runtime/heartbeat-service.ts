@@ -22,6 +22,7 @@ import { buildMainLoopHeartbeatPrompt, isMainSession } from '@/lib/server/agents
 import { ensureAgentThreadSession } from '@/lib/server/agents/agent-thread-session'
 import { isAgentDisabled } from '@/lib/server/agents/agent-availability'
 import { errorMessage, hmrSingleton, jitteredBackoff } from '@/lib/shared-utils'
+import { WORKER_ONLY_PROVIDER_IDS } from '@/lib/provider-sets'
 
 const HEARTBEAT_TICK_MS = 60_000
 const MAX_CONCURRENT_HEARTBEATS = 1
@@ -356,6 +357,30 @@ export function buildAgentHeartbeatPrompt(session: any, agent: any, fallbackProm
     .join('\n')
   if (recentContext) sections.push(`Recent conversation:\n${recentContext}`)
 
+  // ── Phase 4b: Chatroom mentions since last heartbeat ──
+  try {
+    const chatrooms = Object.values(loadChatrooms()) as Chatroom[]
+    const myChatrooms = chatrooms.filter((c) => !c.archivedAt && c.agentIds?.includes(agentId))
+    if (myChatrooms.length > 0) {
+      const lastHeartbeat = state.lastBySession.get(session.id) || 0
+      const chatroomLines = myChatrooms
+        .map((c) => {
+          const recent = (c.messages || []).filter((m: { time: number }) => m.time > lastHeartbeat)
+          if (recent.length === 0) return null
+          const mentions = recent.filter((m: { text?: string; mentions?: string[] }) =>
+            m.text?.includes(`@${agent?.name}`) || m.mentions?.includes(agentId),
+          )
+          if (mentions.length === 0) return null
+          const latest = mentions[mentions.length - 1] as { text?: string }
+          return `- ${c.name}: ${mentions.length} new mention(s) — latest: "${latest?.text?.slice(0, 100)}"`
+        })
+        .filter(Boolean)
+      if (chatroomLines.length > 0) {
+        sections.push(`Chatroom mentions since last check:\n${chatroomLines.join('\n')}`)
+      }
+    }
+  } catch { /* best-effort */ }
+
   // ── Phase 5: Execution instructions ──
   if (fallbackPrompt !== DEFAULT_HEARTBEAT_PROMPT) sections.push(`\nAgent instructions:\n${fallbackPrompt}`)
 
@@ -511,7 +536,7 @@ export async function tickHeartbeats() {
 
   const agents = loadAgents()
   const hbAgents = (Object.values(agents) as any[]).filter(
-    (a) => a?.id && a.heartbeatEnabled === true && !isAgentDisabled(a),
+    (a) => a?.id && a.heartbeatEnabled === true && !isAgentDisabled(a) && !WORKER_ONLY_PROVIDER_IDS.has(a.provider),
   )
   for (const agent of hbAgents) {
     ensureAgentThreadSession(String(agent.id))
@@ -726,7 +751,7 @@ function seedLastActive() {
   const agents = loadAgents()
   const hbAgentIds = new Set(
     (Object.values(agents) as unknown as Record<string, unknown>[])
-      .filter((a) => a?.heartbeatEnabled === true && !isAgentDisabled(a))
+      .filter((a) => a?.heartbeatEnabled === true && !isAgentDisabled(a) && !WORKER_ONLY_PROVIDER_IDS.has(a.provider as string))
       .map((a) => String(a.id)),
   )
   const sessions = loadSessions()

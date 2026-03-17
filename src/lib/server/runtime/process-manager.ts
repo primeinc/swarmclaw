@@ -244,9 +244,13 @@ export async function startManagedProcess(opts: StartProcessOptions): Promise<St
   state.records.set(id, record)
 
   const { shell, args } = getShellCommand(opts.command, id, opts.sandbox)
+  // Strip SwarmClaw-specific env vars so agent child processes don't inherit
+  // our port binding or internal keys (e.g. npm dev servers defaulting to :3456)
+  const stripKeys = new Set(['PORT', 'ACCESS_KEY', 'NEXTAUTH_SECRET'])
+  const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !stripKeys.has(k))) as NodeJS.ProcessEnv
   const child = spawn(shell, args, {
     cwd: opts.sandbox ? undefined : opts.cwd,
-    env: opts.sandbox ? process.env : { ...process.env, ...(opts.env || {}) },
+    env: opts.sandbox ? process.env : { ...cleanEnv, ...(opts.env || {}) },
     stdio: 'pipe',
   })
   state.children.set(id, child)

@@ -6,6 +6,7 @@ import { useAppStore } from '@/stores/use-app-store'
 import { Badge } from '@/components/ui/badge'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { PageLoader } from '@/components/ui/page-loader'
 import { SearchInput } from '@/components/ui/search-input'
 import type { MemoryEntry } from '@/types'
 
@@ -77,6 +78,10 @@ export function KnowledgeList() {
 
   const formatDate = (ts: number) => {
     return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
+  if (!loaded) {
+    return <PageLoader label="Loading knowledge..." />
   }
 
   return (

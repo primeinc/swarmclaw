@@ -19,7 +19,7 @@ export async function expandQuery(query: string): Promise<string[]> {
   const cred = creds[defaultAgent.credentialId || '']
   const apiKey = cred ? decryptKey(cred.encryptedKey) : undefined
 
-  const systemPrompt = `You are a search query expansion assistant. 
+  const systemPrompt = `You are a search query expansion assistant.
 Given a user's question, generate 3 different semantic search queries that would help find the answer in a vector database.
 Use different vocabulary and focus on different aspects of the intent.
 Format your response as a simple newline-separated list. No numbering, no bullets, no introduction.`
@@ -27,7 +27,14 @@ Format your response as a simple newline-separated list. No numbering, no bullet
   let expanded = ''
   try {
     await providerEntry.handler.streamChat({
-      session: { id: 'expansion', messages: [], model: defaultAgent.model, provider: defaultAgent.provider },
+      session: {
+        id: 'expansion',
+        messages: [],
+        model: defaultAgent.model,
+        provider: defaultAgent.provider,
+        ollamaMode: defaultAgent.ollamaMode ?? null,
+        apiEndpoint: defaultAgent.apiEndpoint ?? null,
+      },
       message: query,
       apiKey,
       systemPrompt,

@@ -25,6 +25,7 @@ import {
   buildSuggestionsSection,
   buildProactiveMemorySection,
   buildCoordinatorSection,
+  buildCredentialAwarenessSection,
 } from '@/lib/server/chat-execution/prompt-sections'
 
 import { logExecution } from '@/lib/server/execution-log'
@@ -46,6 +47,7 @@ import {
 import {
   resolveContinuationAssistantText,
   buildContinuationPrompt,
+  getToolFrequencyHint,
 } from '@/lib/server/chat-execution/stream-continuation'
 import type { ContinuationType } from '@/lib/server/chat-execution/stream-continuation'
 import { errorMessage, sleep } from '@/lib/shared-utils'
@@ -85,6 +87,7 @@ import {
 import { IterationTimers } from '@/lib/server/chat-execution/iteration-timers'
 import { processIterationEvents } from '@/lib/server/chat-execution/iteration-event-handler'
 import { evaluateContinuation } from '@/lib/server/chat-execution/continuation-evaluator'
+import { evaluateResponseCompleteness } from '@/lib/server/chat-execution/response-completeness'
 import { finalizeStreamResult } from '@/lib/server/chat-execution/post-stream-finalization'
 import {
   classifyMessage,
@@ -384,6 +387,9 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
   if (!hasProvidedSystemPrompt) {
     const projectBlock = buildProjectSection(activeProjectContext, isMinimalPrompt)
     if (projectBlock) promptParts.push(projectBlock)
+
+    const credentialBlock = buildCredentialAwarenessSection(activeProjectContext, isMinimalPrompt)
+    if (credentialBlock) promptParts.push(credentialBlock)
   }
 
   if (extensionAuditBlock) promptParts.push(extensionAuditBlock)
@@ -734,6 +740,9 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
         },
       })
       if (preview.severity === 'critical') {
+        if (preview.detector === 'tool_frequency') {
+          state.toolFrequencyBlocked = toolName
+        }
         write(`data: ${JSON.stringify({
           t: 'status',
           text: JSON.stringify({
@@ -744,6 +753,11 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
           }),
         })}\n\n`)
         return { blockReason: preview.message }
+      }
+      // Enhance tool_frequency warnings with batching hints
+      if (preview.detector === 'tool_frequency' && preview.toolName) {
+        const hint = getToolFrequencyHint(preview.toolName, sessionExtensions)
+        return { warning: `${preview.message}\n${hint}` }
       }
       return { warning: preview.message }
     },
@@ -807,6 +821,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
     for (let iteration = 0; iteration <= maxIterations; iteration++) {
       let shouldContinue: ContinuationType = false
       let requiredToolReminderNames: string[] = []
+      let frequencyLimitedToolName: string | undefined
 
       const iterationStartState = state.snapshot()
 
@@ -967,6 +982,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
           message,
           sessionExtensions,
           isConnectorSession,
+          isCoordinatorAgent,
           history,
           session,
           write,
@@ -981,6 +997,7 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
         if (decision.requiredToolReminderNames.length > 0) {
           requiredToolReminderNames = decision.requiredToolReminderNames
         }
+        frequencyLimitedToolName = decision.frequencyLimitedToolName
         // Upgrade tool_summary to coordinator_synthesis for coordinator agents
         // so they get a delegation-aware synthesis prompt
         if (shouldContinue === 'tool_summary' && isCoordinatorAgent) {
@@ -988,7 +1005,28 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
         }
       }
 
+      // Async LLM-based incomplete-action check: catches "I'll run the deployment:" with no tool calls
+      if (!shouldContinue && outcome && !state.hasToolCalls && state.fullText.trim().length > 0 && state.fullText.trim().length < 500) {
+        const completeness = await evaluateResponseCompleteness({
+          sessionId: session.id,
+          agentId: session.agentId,
+          message,
+          response: state.fullText,
+          toolCallCount: state.streamedToolEvents.length,
+        })
+        if (completeness?.isIncomplete && completeness.confidence >= 0.7 && limits.canContinue('deliverable_followthrough')) {
+          limits.increment('deliverable_followthrough')
+          shouldContinue = 'deliverable_followthrough'
+          write(`data: ${JSON.stringify({ t: 'status', text: JSON.stringify({ incompleteActionContinuation: true }) })}\n\n`)
+        }
+      }
+
       if (!shouldContinue) break
+
+      // Reset tool loop tracker on loop_recovery so the agent gets a fresh frequency budget
+      if (shouldContinue === 'loop_recovery') {
+        loopTracker.reset()
+      }
 
       const continuationAssistantText = shouldContinue === 'memory_write_followthrough'
         ? ''
@@ -1004,6 +1042,8 @@ async function streamAgentChatCore(opts: StreamAgentChatOpts): Promise<StreamAge
         toolEvents: state.streamedToolEvents,
         requiredToolReminderNames,
         cwd: session.cwd,
+        frequencyLimitedToolName,
+        sessionExtensions,
       })
 
       if (continuationPrompt) {

@@ -3,19 +3,19 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { safeParseBody } from '@/lib/server/safe-parse-body'
+import { resolveWorkspacePath } from '@/lib/server/resolve-workspace-path'
 
 export async function POST(req: Request) {
-  const { data: body, error } = await safeParseBody<{ path?: string }>(req)
+  const { data: body, error } = await safeParseBody<{ path?: string; cwd?: string }>(req)
   if (error) return error
-  const { path: targetPath } = body
+  const { path: targetPath, cwd } = body
   if (!targetPath || typeof targetPath !== 'string') {
     return NextResponse.json({ error: 'path is required' }, { status: 400 })
   }
 
-  const resolved = path.resolve(targetPath)
+  const resolved = resolveWorkspacePath(targetPath, cwd)
 
-  // Verify the path exists
-  if (!fs.existsSync(resolved)) {
+  if (!resolved) {
     return NextResponse.json({ error: 'Path does not exist' }, { status: 404 })
   }
 

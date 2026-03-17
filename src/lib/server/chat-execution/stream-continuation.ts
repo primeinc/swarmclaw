@@ -30,6 +30,8 @@ export type ContinuationType =
   | 'tool_error_followthrough'
   | 'tool_summary'
   | 'coordinator_synthesis'
+  | 'coordinator_delegation_nudge'
+  | 'loop_recovery'
   | false
 
 function looksLikeToolErrorOutput(output: string): boolean {
@@ -383,6 +385,44 @@ export function renderToolEvidence(events: MessageToolEvent[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Tool frequency batching hints
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a tool-specific hint suggesting how the agent can batch or reduce
+ * calls to the tool that hit the frequency limit.
+ */
+export function getToolFrequencyHint(toolName: string, sessionExtensions: string[]): string {
+  const hasShell = sessionExtensions.some((ext) => ['shell', 'execute_command'].includes(ext))
+
+  switch (toolName) {
+    case 'files':
+    case 'read_file':
+      if (hasShell) {
+        return 'Hint: Use the shell tool to batch-read multiple files at once (e.g. `cat file1 file2`) or search across directories (e.g. `grep -r pattern dir/`). For batch writes, use the files tool\'s array action: {"action":"write","files":[{path,content},…]}.'
+      }
+      return 'Hint: For batch writes, use the files tool\'s array action: {"action":"write","files":[{path,content},…]}. Prioritize the most important remaining files.'
+
+    case 'shell':
+    case 'execute_command':
+      return 'Hint: Combine multiple shell commands into a single call using `&&` or `;`, or write a small script to run them together.'
+
+    case 'web':
+    case 'browser':
+    case 'http_request':
+    case 'web_search':
+    case 'web_fetch':
+      return 'Hint: You have done extensive research. Stop gathering more sources and use the information you already have to complete the task.'
+
+    case 'spawn_subagent':
+      return 'Hint: Use the batch action with `executionMode: "parallel"` to spawn multiple subagents in a single call instead of spawning them one at a time.'
+
+    default:
+      return 'Prioritize the most important remaining steps and try to accomplish more per tool call.'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Continuation prompt builders
 // ---------------------------------------------------------------------------
 
@@ -683,6 +723,8 @@ export function buildContinuationPrompt(params: {
   toolEvents: MessageToolEvent[]
   requiredToolReminderNames: string[]
   cwd?: string
+  frequencyLimitedToolName?: string
+  sessionExtensions?: string[]
 }): string | null {
   switch (params.type) {
     case 'memory_write_followthrough':
@@ -753,6 +795,29 @@ export function buildContinuationPrompt(params: {
         'Address the user\'s original request directly. Do not repeat raw tool outputs — summarize, combine, and present the findings clearly.',
         params.fullText.trim() ? `Your partial response so far: "${params.fullText.trim().slice(0, 300)}"` : '',
       ].filter(Boolean).join('\n')
+
+    case 'coordinator_delegation_nudge':
+      return [
+        'You have specialist workers available but have been using tools directly for substantial work.',
+        'Consider delegating the remaining work via `spawn_subagent` to the appropriate worker.',
+        'Direct tool use is fine for quick validation, but substantial work should go to specialists.',
+      ].join('\n')
+
+    case 'loop_recovery': {
+      const freqTool = params.frequencyLimitedToolName
+      const hint = freqTool
+        ? getToolFrequencyHint(freqTool, params.sessionExtensions ?? [])
+        : 'Prioritize the most important remaining steps and try to accomplish more per tool call.'
+      return [
+        '[Tool Frequency Limit Recovery]',
+        freqTool
+          ? `You reached the per-tool call frequency limit for "${freqTool}". Your tool counters have been reset.`
+          : 'You reached the per-tool call frequency limit. Your tool counters have been reset.',
+        'Continue from where you left off — do not repeat completed work.',
+        hint,
+        'You have a limited number of these resets, so prioritize the most important remaining steps.',
+      ].join('\n')
+    }
 
     case 'transient':
     case false:

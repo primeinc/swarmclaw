@@ -3,7 +3,7 @@ import type { GoalContract, Message, MessageToolEvent, Session } from '@/types'
 import { mergeGoalContracts, parseGoalContractFromText, parseMainLoopPlan, parseMainLoopReview } from '@/lib/server/agents/autonomy-contract'
 import { assessAutonomyRun } from '@/lib/server/autonomy/supervisor-reflection'
 import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
-import { loadSessions, loadSettings } from '@/lib/server/storage'
+import { loadSessions, loadSettings, loadPersistedMainLoopState, upsertPersistedMainLoopState, deletePersistedMainLoopState } from '@/lib/server/storage'
 import { buildMissionHeartbeatPrompt as buildMissionHeartbeatPromptFromMission, getMissionForSession } from '@/lib/server/missions/mission-service'
 
 const LEGACY_META_LINE_RE = /\[(?:MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]\s*(\{[^\n]*\})?/i
@@ -433,12 +433,27 @@ function hydrateStateFromSession(sessionId: string): MainLoopState | null {
   return normalizeState(hydrated)
 }
 
+function persistState(sessionId: string, state: MainLoopState): void {
+  upsertPersistedMainLoopState(sessionId, state as unknown)
+}
+
 function getOrCreateState(sessionId: string): MainLoopState | null {
   const existing = stateMap.get(sessionId)
   if (existing) return existing
+
+  // Try disk (survives full restart)
+  const persisted = loadPersistedMainLoopState(sessionId) as Partial<MainLoopState> | null
+  if (persisted) {
+    const restored = normalizeState(persisted)
+    stateMap.set(sessionId, restored)
+    return restored
+  }
+
+  // Fall back to message hydration (migration / first-time)
   const hydrated = hydrateStateFromSession(sessionId)
   if (!hydrated) return null
   stateMap.set(sessionId, hydrated)
+  persistState(sessionId, hydrated)
   return hydrated
 }
 
@@ -782,6 +797,7 @@ export function getMainLoopStateForSession(sessionId: string): MainLoopState | n
 }
 
 export function clearMainLoopStateForSession(sessionId: string): boolean {
+  deletePersistedMainLoopState(sessionId)
   return stateMap.delete(sessionId)
 }
 
@@ -794,6 +810,7 @@ export function pruneMainLoopState(liveSessionIds: Set<string>): number {
   for (const sessionId of stateMap.keys()) {
     if (!liveSessionIds.has(sessionId)) {
       stateMap.delete(sessionId)
+      deletePersistedMainLoopState(sessionId)
       removed++
     }
   }
@@ -813,6 +830,7 @@ export function setMainLoopStateForSession(sessionId: string, patch: Partial<Mai
     updatedAt: now(),
   })
   stateMap.set(sessionId, next)
+  persistState(sessionId, next)
   return normalizeState(next)
 }
 
@@ -842,7 +860,9 @@ export function pushMainLoopEventToMainSessions(input: PushMainLoopEventInput): 
     state.status = eventStatusForType(input.type || 'event')
     appendTimeline(state, input.type || 'event', eventText, state.status)
     state.updatedAt = nowTs
-    stateMap.set(session.id, clampState(state))
+    const clamped = clampState(state)
+    stateMap.set(session.id, clamped)
+    persistState(session.id, clamped)
     enqueueSystemEvent(session.id, `[Main loop] ${eventText}`, `main-loop:${input.type || 'event'}`)
     count += 1
   }
@@ -1014,7 +1034,9 @@ export function handleMainLoopRunResult(input: HandleMainLoopRunResultInput): Ma
       state.paused = true
       state.followupChainCount = 0
       appendTimeline(state, 'lifetime-cap', `Lifetime iteration cap reached (${MAX_LIFETIME_ITERATIONS}). Pausing autonomous operation.`, 'blocked')
-      stateMap.set(input.sessionId, clampState(state))
+      const capClamped = clampState(state)
+      stateMap.set(input.sessionId, capClamped)
+      persistState(input.sessionId, capClamped)
       return null
     }
     const shouldContinue = !!supervisorPrompt || needsReplan || state.status === 'progress' || (!!state.nextAction && toolNames.length > 0)
@@ -1037,6 +1059,8 @@ export function handleMainLoopRunResult(input: HandleMainLoopRunResultInput): Ma
     }
   }
 
-  stateMap.set(input.sessionId, clampState(state))
+  const finalClamped = clampState(state)
+  stateMap.set(input.sessionId, finalClamped)
+  persistState(input.sessionId, finalClamped)
   return followup
 }

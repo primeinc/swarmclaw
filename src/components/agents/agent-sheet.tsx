@@ -13,7 +13,7 @@ import { ModelCombobox } from '@/components/shared/model-combobox'
 import type { ProviderType, ClaudeSkill, AgentWallet, AgentPackManifest, AgentRoutingStrategy, AgentRoutingTarget } from '@/types'
 import { WalletSection } from '@/components/wallets/wallet-section'
 import { AVAILABLE_TOOLS, PLATFORM_TOOLS } from '@/lib/tool-definitions'
-import { NATIVE_CAPABILITY_PROVIDER_IDS, NON_LANGGRAPH_PROVIDER_IDS } from '@/lib/provider-sets'
+import { NATIVE_CAPABILITY_PROVIDER_IDS, NON_LANGGRAPH_PROVIDER_IDS, WORKER_ONLY_PROVIDER_IDS } from '@/lib/provider-sets'
 import { isOrchestratorProviderEligible } from '@/lib/orchestrator-config'
 import { AgentAvatar } from './agent-avatar'
 import { AgentPickerList } from '@/components/shared/agent-picker-list'
@@ -281,6 +281,7 @@ export function AgentSheet() {
   const promptFileRef = useRef<HTMLInputElement>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
   const lastAutoSyncedModelsKeyRef = useRef<string | null>(null)
+  const skipAutoModelRef = useRef(false)
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
 
   const handleFileUpload = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -311,6 +312,7 @@ export function AgentSheet() {
   const providerCredentials = Object.values(credentials).filter((c) => c.provider === provider)
   const openclawCredentials = Object.values(credentials).filter((c) => c.provider === 'openclaw')
   const openclawGatewayProfiles = gatewayProfiles.filter((item) => item.provider === 'openclaw')
+  const setAgentPrefill = useAppStore((s) => s.setAgentPrefill)
   const editing = editingId ? agents[editingId] : null
   const hasNativeCapabilities = NATIVE_CAPABILITY_PROVIDER_IDS.has(provider)
   const globalVoiceId = typeof appSettings.elevenLabsVoiceId === 'string' ? appSettings.elevenLabsVoiceId.trim() : ''
@@ -474,6 +476,86 @@ export function AgentSheet() {
         setMonthlyBudget(typeof editing.monthlyBudget === 'number' && editing.monthlyBudget > 0 ? String(editing.monthlyBudget) : '')
         setBudgetAction(editing.budgetAction || 'warn')
         void loadAgentWallets(editing.id)
+      } else if (useAppStore.getState().agentPrefill) {
+        // Duplicate mode — prefill from source agent, then clear
+        const src = useAppStore.getState().agentPrefill!
+        setAgentPrefill(null)
+        skipAutoModelRef.current = true
+        setName(`${src.name || 'Agent'} (Copy)`)
+        setDescription(src.description || '')
+        setSoul(src.soul || '')
+        setSoulInitial(src.soul || '')
+        setSoulSaveState('idle')
+        setSystemPrompt(src.systemPrompt || '')
+        setProvider(src.provider || 'claude-cli')
+        setModel(src.model || '')
+        setCredentialId(src.credentialId || null)
+        setApiEndpoint(src.apiEndpoint || null)
+        setGatewayProfileId(src.gatewayProfileId || null)
+        setPreferredGatewayTagsText(formatGatewayTagList(src.preferredGatewayTags))
+        setPreferredGatewayUseCase(src.preferredGatewayUseCase || '')
+        setRoutingStrategy(src.routingStrategy || 'single')
+        setRoutingTargets(src.routingTargets || [])
+        setRole(src.role === 'coordinator' ? 'coordinator' : 'worker')
+        setDelegationEnabled(src.delegationEnabled === true)
+        setDelegationTargetMode(src.delegationTargetMode === 'selected' ? 'selected' : 'all')
+        setDelegationTargetAgentIds(src.delegationTargetAgentIds || [])
+        setTools(getEnabledToolIds(src))
+        setExtensions(getEnabledExtensionIds(src))
+        setSkills(src.skills || [])
+        setSkillIds(src.skillIds || [])
+        setMcpServerIds(src.mcpServerIds || [])
+        setMcpDisabledTools(src.mcpDisabledTools || [])
+        setFallbackCredentialIds(src.fallbackCredentialIds || [])
+        setCapabilities(Array.isArray(src.capabilities) ? src.capabilities : [])
+        setCapInput('')
+        setOllamaMode(resolveStoredOllamaMode({
+          ollamaMode: src.ollamaMode ?? null,
+          apiEndpoint: src.apiEndpoint ?? null,
+        }))
+        setOpenclawEnabled(src.provider === 'openclaw')
+        setProjectId(src.projectId)
+        setAvatarSeed(crypto.randomUUID().slice(0, 8))
+        setAvatarUrl(null)
+        setThinkingLevel(src.thinkingLevel || '')
+        setMemoryScopeMode(src.memoryScopeMode || 'auto')
+        setMemoryTierPreference(src.memoryTierPreference || 'blended')
+        setProactiveMemory(src.proactiveMemory !== false)
+        setAutoDraftSkillSuggestions(src.autoDraftSkillSuggestions !== false)
+        setAutoRecovery(src.autoRecovery || false)
+        setDisabled(false)
+        setFilesystemScope(src.filesystemScope === 'machine' ? 'machine' : 'workspace')
+        setVoiceId(src.elevenLabsVoiceId || '')
+        setHeartbeatEnabled(src.heartbeatEnabled || false)
+        setHeartbeatIntervalSec(parseDurationToSec(src.heartbeatInterval, src.heartbeatIntervalSec))
+        setHeartbeatModel(src.heartbeatModel || '')
+        setHeartbeatPrompt(src.heartbeatPrompt || '')
+        setOrchestratorEnabled(src.orchestratorEnabled || false)
+        setOrchestratorMission(src.orchestratorMission || '')
+        setOrchestratorWakeInterval(typeof src.orchestratorWakeInterval === 'string' ? src.orchestratorWakeInterval : typeof src.orchestratorWakeInterval === 'number' ? `${src.orchestratorWakeInterval}s` : '5m')
+        setOrchestratorGovernance(src.orchestratorGovernance || 'autonomous')
+        setOrchestratorMaxCyclesPerDay(src.orchestratorMaxCyclesPerDay != null ? String(src.orchestratorMaxCyclesPerDay) : '')
+        setSessionResetMode(src.sessionResetMode || '')
+        setSessionIdleTimeoutSec(src.sessionIdleTimeoutSec != null ? String(src.sessionIdleTimeoutSec) : '')
+        setSessionMaxAgeSec(src.sessionMaxAgeSec != null ? String(src.sessionMaxAgeSec) : '')
+        setSessionDailyResetAt(src.sessionDailyResetAt || '')
+        setSessionResetTimezone(src.sessionResetTimezone || '')
+        setIdentityPersonaLabel(src.identityState?.personaLabel || '')
+        setIdentitySelfSummary(src.identityState?.selfSummary || '')
+        setIdentityRelationshipSummary(src.identityState?.relationshipSummary || '')
+        setIdentityToneStyle(src.identityState?.toneStyle || '')
+        setIdentityBoundariesText(formatIdentityList(src.identityState?.boundaries))
+        setIdentityContinuityNotesText(formatIdentityList(src.identityState?.continuityNotes))
+        setBudgetEnabled(
+          (typeof src.hourlyBudget === 'number' && src.hourlyBudget > 0)
+          || (typeof src.dailyBudget === 'number' && src.dailyBudget > 0)
+          || (typeof src.monthlyBudget === 'number' && src.monthlyBudget > 0),
+        )
+        setHourlyBudget(typeof src.hourlyBudget === 'number' && src.hourlyBudget > 0 ? String(src.hourlyBudget) : '')
+        setDailyBudget(typeof src.dailyBudget === 'number' && src.dailyBudget > 0 ? String(src.dailyBudget) : '')
+        setMonthlyBudget(typeof src.monthlyBudget === 'number' && src.monthlyBudget > 0 ? String(src.monthlyBudget) : '')
+        setBudgetAction(src.budgetAction || 'warn')
+        setAgentWallets([])
       } else {
         setName('')
         setDescription('')
@@ -547,6 +629,10 @@ export function AgentSheet() {
   }, [open, editingId])
 
   useEffect(() => {
+    if (skipAutoModelRef.current) {
+      skipAutoModelRef.current = false
+      return
+    }
     if (currentProvider?.models.length && !editing) {
       setModel(currentProvider.models[0])
     }
@@ -740,6 +826,15 @@ export function AgentSheet() {
       monthlyBudget: parsedMonthlyBudget && parsedMonthlyBudget > 0 ? parsedMonthlyBudget : null,
       budgetAction: budgetEnabled ? budgetAction : undefined,
     }
+    if (WORKER_ONLY_PROVIDER_IDS.has(provider)) {
+      data.role = 'worker'
+      data.delegationEnabled = false
+      data.heartbeatEnabled = false
+      data.heartbeatInterval = null
+      data.heartbeatIntervalSec = null
+      data.heartbeatModel = null
+      data.heartbeatPrompt = null
+    }
     const savedAgent = editing
       ? await updateAgent(editing.id, data)
       : await createAgent(data)
@@ -921,9 +1016,8 @@ export function AgentSheet() {
     if (sessionResetMode || sessionIdleTimeoutSec || sessionMaxAgeSec || sessionDailyResetAt || sessionResetTimezone) badges.push('Session reset')
     if (identityPersonaLabel.trim() || identitySelfSummary.trim() || identityRelationshipSummary.trim() || identityToneStyle.trim()) badges.push('Continuity')
     if (skills.length > 0 || skillIds.length > 0 || mcpServerIds.length > 0 || mcpDisabledTools.length > 0) badges.push('Skills & MCP')
-    if (toolsDifferFromDefault || filesystemScope === 'machine' || delegationEnabled || delegationTargetMode === 'selected' || delegationTargetAgentIds.length > 0) badges.push('Tools')
+    if (toolsDifferFromDefault || filesystemScope === 'machine') badges.push('Tools')
     if (budgetEnabled) badges.push('Budget')
-    if (orchestratorEnabled) badges.push('Orchestrator')
     if (disabled) badges.push('Disabled')
     if (autoRecovery) badges.push('Recovery')
     if (projectId) badges.push('Project')
@@ -945,7 +1039,6 @@ export function AgentSheet() {
     mcpServerIds.length,
     memoryScopeMode,
     memoryTierPreference,
-    orchestratorEnabled,
     proactiveMemory,
     projectId,
     routingStrategy,
@@ -957,9 +1050,6 @@ export function AgentSheet() {
     sessionResetTimezone,
     skillIds.length,
     skills.length,
-    delegationEnabled,
-    delegationTargetAgentIds.length,
-    delegationTargetMode,
     thinkingLevel,
     toolsDifferFromDefault,
     voiceId,
@@ -1636,6 +1726,172 @@ export function AgentSheet() {
         )}
       </SectionCard>
 
+      {(!WORKER_ONLY_PROVIDER_IDS.has(provider) || isOrchestratorProviderEligible(provider)) && (
+      <SectionCard
+        title="Role & Autonomy"
+        description="Define how this agent operates in the swarm."
+      >
+        {/* --- Role subsection --- */}
+        {!WORKER_ONLY_PROVIDER_IDS.has(provider) && (
+          <div className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] px-4 py-4 mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <SectionLabel>Role</SectionLabel>
+              <HintTip text="Coordinators automatically receive a list of available agents and can decompose complex goals, delegate to specialists, and synthesize results." />
+            </div>
+            <div className="flex gap-2 mb-3">
+              {(['worker', 'coordinator'] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => {
+                    setRole(r)
+                    if (r === 'coordinator') setDelegationEnabled(true)
+                  }}
+                  className={`px-4 py-1.5 rounded-[8px] text-[13px] font-display font-500 transition-all duration-200
+                    ${role === r
+                      ? 'bg-accent-bright text-white'
+                      : 'bg-white/[0.06] text-text-3 hover:bg-white/[0.10]'}`}
+                >
+                  {r === 'worker' ? 'Worker' : 'Coordinator'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[12px] text-text-3/75">
+              {role === 'coordinator'
+                ? 'Breaks down complex goals, delegates to specialists, and synthesizes results'
+                : 'Executes tasks when prompted by users or other agents'}
+            </p>
+
+            {/* Delegation toggle */}
+            <div className="mt-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div
+                  onClick={() => {
+                    if (role !== 'coordinator') setDelegationEnabled((current) => !current)
+                  }}
+                  className={`w-11 h-6 rounded-full transition-all duration-200 relative cursor-pointer shrink-0
+                    ${canDelegateToAgents ? 'bg-accent-bright' : 'bg-white/[0.08]'}
+                    ${role === 'coordinator' ? 'opacity-60' : ''}`}
+                >
+                  <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all duration-200
+                    ${canDelegateToAgents ? 'left-[22px]' : 'left-0.5'}`} />
+                </div>
+                <span className="font-display text-[14px] font-600 text-text-2">Can Delegate</span>
+                <span className="text-[12px] text-text-3">
+                  {role === 'coordinator' ? 'Always on for coordinators' : 'Route work to specialized agents'}
+                </span>
+              </label>
+            </div>
+
+            {/* Delegation targets */}
+            {canDelegateToAgents && agentOptions.length > 0 && (
+              <div className="mt-4">
+                <SectionLabel>Allowed Delegate Agents</SectionLabel>
+                <AgentPickerList
+                  agents={agentOptions}
+                  selected={delegationTargetMode === 'all' ? [] : delegationTargetAgentIds}
+                  onSelect={(id) => toggleAgent(id)}
+                  noneOption={{
+                    label: 'All Agents',
+                    onSelect: () => {
+                      setDelegationTargetMode('all')
+                      setDelegationTargetAgentIds([])
+                    },
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* --- Orchestrator subsection --- */}
+        {isOrchestratorProviderEligible(provider) && (
+          <div className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[14px] font-600 text-text">Orchestrator Mode</p>
+                <p className="mt-1 text-[12px] leading-[1.6] text-text-3/75">
+                  Wakes on a schedule to autonomously review platform state and take action.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrchestratorEnabled((current) => !current)}
+                className={`relative h-6 w-11 shrink-0 rounded-full border-none transition-colors duration-200 ${orchestratorEnabled ? 'bg-accent-bright' : 'bg-white/[0.12]'}`}
+                aria-pressed={orchestratorEnabled}
+              >
+                <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform duration-200 ${orchestratorEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+
+            {orchestratorEnabled && (
+              <div className="mt-4 space-y-4">
+                <div>
+                  <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                    Mission
+                  </label>
+                  <textarea
+                    value={orchestratorMission}
+                    onChange={(e) => setOrchestratorMission(e.target.value)}
+                    placeholder="Describe the orchestrator's mission — what should it manage, optimize, or oversee?"
+                    rows={3}
+                    className={`${inputClass} resize-y min-h-[84px]`}
+                    style={{ fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                      Wake Interval
+                    </label>
+                    <input
+                      type="text"
+                      value={orchestratorWakeInterval}
+                      onChange={(e) => setOrchestratorWakeInterval(e.target.value)}
+                      placeholder="5m"
+                      className={inputClass}
+                      style={{ fontFamily: 'inherit' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                      Governance
+                    </label>
+                    <select
+                      value={orchestratorGovernance}
+                      onChange={(e) => setOrchestratorGovernance(e.target.value as typeof orchestratorGovernance)}
+                      className={inputClass}
+                      style={{ fontFamily: 'inherit' }}
+                    >
+                      <option value="autonomous">Autonomous</option>
+                      <option value="approval-required">Approval Required</option>
+                      <option value="notify-only">Notify Only</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
+                      Max Cycles/Day
+                    </label>
+                    <input
+                      type="number"
+                      value={orchestratorMaxCyclesPerDay}
+                      onChange={(e) => setOrchestratorMaxCyclesPerDay(e.target.value)}
+                      placeholder="No limit"
+                      min={1}
+                      className={inputClass}
+                      style={{ fontFamily: 'inherit' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </SectionCard>
+      )}
+
+      {!WORKER_ONLY_PROVIDER_IDS.has(provider) && (
       <SectionCard
         title="Behavior"
         description="Keep the core autonomy switch visible. Expert heartbeat controls stay in advanced settings."
@@ -1657,94 +1913,9 @@ export function AgentSheet() {
           </button>
         </div>
       </SectionCard>
-
-      {isOrchestratorProviderEligible(provider) && (
-      <SectionCard
-        title="Orchestrator"
-        description="Turn this agent into a self-directing orchestrator that wakes on a schedule and manages the platform."
-      >
-        <div className="flex items-center justify-between gap-4 rounded-[14px] border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-          <div className="min-w-0">
-            <p className="text-[14px] font-600 text-text">Orchestrator Mode</p>
-            <p className="mt-1 text-[12px] leading-[1.6] text-text-3/75">
-              Enable autonomous platform management — wakes on a schedule, reviews state, and delegates work.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setOrchestratorEnabled((current) => !current)}
-            className={`relative h-6 w-11 shrink-0 rounded-full border-none transition-colors duration-200 ${orchestratorEnabled ? 'bg-accent-bright' : 'bg-white/[0.12]'}`}
-            aria-pressed={orchestratorEnabled}
-          >
-            <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform duration-200 ${orchestratorEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-          </button>
-        </div>
-
-        {orchestratorEnabled && (
-          <div className="mt-4 space-y-4">
-            <div>
-              <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
-                Mission
-              </label>
-              <textarea
-                value={orchestratorMission}
-                onChange={(e) => setOrchestratorMission(e.target.value)}
-                placeholder="Describe the orchestrator's mission — what should it manage, optimize, or oversee?"
-                rows={3}
-                className={`${inputClass} resize-y min-h-[84px]`}
-                style={{ fontFamily: 'inherit' }}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
-                  Wake Interval
-                </label>
-                <input
-                  type="text"
-                  value={orchestratorWakeInterval}
-                  onChange={(e) => setOrchestratorWakeInterval(e.target.value)}
-                  placeholder="5m"
-                  className={inputClass}
-                  style={{ fontFamily: 'inherit' }}
-                />
-              </div>
-              <div>
-                <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
-                  Governance
-                </label>
-                <select
-                  value={orchestratorGovernance}
-                  onChange={(e) => setOrchestratorGovernance(e.target.value as typeof orchestratorGovernance)}
-                  className={inputClass}
-                  style={{ fontFamily: 'inherit' }}
-                >
-                  <option value="autonomous">Autonomous</option>
-                  <option value="approval-required">Approval Required</option>
-                  <option value="notify-only">Notify Only</option>
-                </select>
-              </div>
-              <div>
-                <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">
-                  Max Cycles/Day
-                </label>
-                <input
-                  type="number"
-                  value={orchestratorMaxCyclesPerDay}
-                  onChange={(e) => setOrchestratorMaxCyclesPerDay(e.target.value)}
-                  placeholder="No limit"
-                  min={1}
-                  className={inputClass}
-                  style={{ fontFamily: 'inherit' }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-      </SectionCard>
       )}
 
+      {!WORKER_ONLY_PROVIDER_IDS.has(provider) && (
       <AdvancedSettingsSection
         open={showAdvancedSettings}
         onToggle={() => setShowAdvancedSettings((current) => !current)}
@@ -2160,8 +2331,8 @@ export function AgentSheet() {
       </SectionCard>
 
       <SectionCard
-        title="Tools & Delegation"
-        description="Enable tool families, pin preferred skills, connect MCP tools, and configure delegation behavior for this agent."
+        title="Tools & Skills"
+        description="Enable tool families, pin preferred skills, and connect MCP tools for this agent."
         className="mb-6 border-white/[0.05] bg-white/[0.01]"
       >
       {/* Tools — hidden for providers that manage capabilities outside LangGraph */}
@@ -2406,72 +2577,6 @@ export function AgentSheet() {
         </div>
       )}
 
-      {provider !== 'openclaw' && (
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-4">
-            <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em]">Role</label>
-            <HintTip text="Coordinators automatically receive a list of available agents and can decompose complex goals, delegate to specialists, and synthesize results." />
-          </div>
-          <div className="flex gap-2">
-            {(['worker', 'coordinator'] as const).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => {
-                  setRole(r)
-                  if (r === 'coordinator') setDelegationEnabled(true)
-                }}
-                className={`px-4 py-1.5 rounded-[8px] text-[13px] font-display font-500 transition-all duration-200
-                  ${role === r
-                    ? 'bg-accent-bright text-white'
-                    : 'bg-white/[0.06] text-text-3 hover:bg-white/[0.10]'}`}
-              >
-                {r === 'worker' ? 'Worker' : 'Coordinator'}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {provider !== 'openclaw' && (
-        <div className="mb-8">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div
-              onClick={() => {
-                if (role !== 'coordinator') setDelegationEnabled((current) => !current)
-              }}
-              className={`w-11 h-6 rounded-full transition-all duration-200 relative cursor-pointer
-                ${canDelegateToAgents ? 'bg-accent-bright' : 'bg-white/[0.08]'}
-                ${role === 'coordinator' ? 'opacity-60' : ''}`}
-            >
-              <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all duration-200
-                ${canDelegateToAgents ? 'left-[22px]' : 'left-0.5'}`} />
-            </div>
-            <span className="font-display text-[14px] font-600 text-text-2">Can Delegate to Other Agents</span>
-            <span className="text-[12px] text-text-3">
-              {role === 'coordinator' ? 'Always on for coordinators' : 'Route work to specialized agents and coordinate multi-agent tasks'}
-            </span>
-          </label>
-        </div>
-      )}
-
-      {provider !== 'openclaw' && canDelegateToAgents && agentOptions.length > 0 && (
-        <div className="mb-8">
-          <SectionLabel>Allowed Delegate Agents</SectionLabel>
-          <AgentPickerList
-            agents={agentOptions}
-            selected={delegationTargetMode === 'all' ? [] : delegationTargetAgentIds}
-            onSelect={(id) => toggleAgent(id)}
-            noneOption={{
-              label: 'All Agents',
-              onSelect: () => {
-                setDelegationTargetMode('all')
-                setDelegationTargetAgentIds([])
-              },
-            }}
-          />
-        </div>
-      )}
       <div className="mb-2">
         <label className="block font-display text-[12px] font-600 text-text-2 uppercase tracking-[0.08em] mb-2">Capabilities</label>
         <p className="text-[12px] text-text-3/60 mb-3">Optional tags that describe what this agent is especially good at.</p>
@@ -2562,6 +2667,7 @@ export function AgentSheet() {
       )}
       </SectionCard>
       </AdvancedSettingsSection>
+      )}
 
       {/* Provider key warning */}
       {providerNeedsKey && (

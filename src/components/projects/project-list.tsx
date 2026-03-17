@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '@/stores/use-app-store'
+import { PageLoader } from '@/components/ui/page-loader'
 import type { Agent, BoardTask, Schedule } from '@/types'
 import { relativeDate } from './project-utils'
 
@@ -26,11 +27,10 @@ export function ProjectList() {
   const loadTasks = useAppStore((s) => s.loadTasks)
   const loadSchedules = useAppStore((s) => s.loadSchedules)
   const [search, setSearch] = useState('')
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    loadProjects()
-    loadTasks()
-    loadSchedules()
+    void Promise.all([loadProjects(), loadTasks(), loadSchedules()]).then(() => setLoaded(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -77,6 +77,10 @@ export function ProjectList() {
   const totalProjects = Object.keys(projects).length
   const totalTasks = Object.values(tasks).filter((t) => t.projectId).length
   const totalCompleted = Object.values(tasks).filter((t) => t.projectId && t.status === 'completed').length
+
+  if (!loaded) {
+    return <PageLoader label="Loading projects..." />
+  }
 
   if (!filtered.length && !search) {
     return (

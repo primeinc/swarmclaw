@@ -12,6 +12,7 @@ import type {
   ProtocolPhaseDefinition,
   ProtocolRun,
   ProtocolRunArtifact,
+  ProtocolRunForEachStepState,
   ProtocolRunParallelBranchState,
   ProtocolRunParallelStepState,
   ProtocolRunStatus,
@@ -142,12 +143,11 @@ export function buildParallelStepState(
 }
 
 export function syncProtocolParentFromChildRun(runOrId: ProtocolRun | string, deps?: ProtocolRunDeps): ProtocolRun | null {
-  const { normalizeProtocolRun } = require('@/lib/server/protocols/protocol-normalization') as typeof import('@/lib/server/protocols/protocol-normalization')
-  const { syncForEachParentFromChildRun } = require('@/lib/server/protocols/protocol-foreach') as typeof import('@/lib/server/protocols/protocol-foreach')
-  const { syncSubflowParentFromChildRun } = require('@/lib/server/protocols/protocol-subflow') as typeof import('@/lib/server/protocols/protocol-subflow')
-  const { requestProtocolRunExecution } = require('@/lib/server/protocols/protocol-run-lifecycle') as typeof import('@/lib/server/protocols/protocol-run-lifecycle')
+  const normMod = require('@/lib/server/protocols/protocol-normalization') as typeof import('@/lib/server/protocols/protocol-normalization')
+  const subflowMod = require('@/lib/server/protocols/protocol-subflow') as typeof import('@/lib/server/protocols/protocol-subflow')
+  const lifecycleMod = require('@/lib/server/protocols/protocol-run-lifecycle') as typeof import('@/lib/server/protocols/protocol-run-lifecycle')
 
-  const child = typeof runOrId === 'string' ? loadProtocolRunById(runOrId) : normalizeProtocolRun(runOrId)
+  const child = typeof runOrId === 'string' ? loadProtocolRunById(runOrId) : normMod.normalizeProtocolRun(runOrId)
   if (!child?.parentRunId || !child.parentStepId) return null
   const parent = loadProtocolRunById(child.parentRunId)
   if (!parent) return null
@@ -161,7 +161,11 @@ export function syncProtocolParentFromChildRun(runOrId: ProtocolRun | string, de
   // Delegate to subflow sync if parent step has subflowState
   const subflowState = parent.subflowState?.[child.parentStepId]
   if (subflowState && subflowState.childRunId === child.id) {
-    return syncSubflowParentFromChildRun(child, parent, subflowState, deps)
+    if (typeof subflowMod.syncSubflowParentFromChildRun !== 'function') {
+      console.warn('[protocol] syncSubflowParentFromChildRun not available (circular dep not yet resolved), skipping subflow sync')
+      return parent
+    }
+    return subflowMod.syncSubflowParentFromChildRun(child, parent, subflowState, deps)
   }
 
   const existingState = parent.parallelState?.[child.parentStepId]
@@ -200,7 +204,9 @@ export function syncProtocolParentFromChildRun(runOrId: ProtocolRun | string, de
     }, deps)
   }
   if (nextState.joinReady && updatedParent.status === 'waiting') {
-    requestProtocolRunExecution(updatedParent.id, deps)
+    if (typeof lifecycleMod.requestProtocolRunExecution === 'function') {
+      lifecycleMod.requestProtocolRunExecution(updatedParent.id, deps)
+    }
   }
   return loadProtocolRunById(updatedParent.id)
 }
@@ -540,4 +546,81 @@ export function emitSummaryToParentChatroom(run: ProtocolRun, deps?: ProtocolRun
       data: { parentChatroomId: run.parentChatroomId },
     }, deps)
   }
+}
+
+/**
+ * Sync a for-each parent run from a completed child branch run.
+ * Moved here from protocol-foreach.ts to break the circular dependency:
+ *   protocol-step-helpers → protocol-foreach → protocol-step-helpers
+ */
+export function syncForEachParentFromChildRun(
+  child: ProtocolRun,
+  parent: ProtocolRun,
+  forEachState: ProtocolRunForEachStepState,
+  deps?: ProtocolRunDeps,
+): ProtocolRun | null {
+  const nextBranches = forEachState.branches.map((branch) => (
+    branch.runId === child.id ? buildParallelBranchState(child, branch) : branch
+  ))
+  const waitingOnBranchIds = nextBranches
+    .filter((b) => !isTerminalProtocolRunStatus(b.status))
+    .map((b) => b.branchId)
+  const joinReady = waitingOnBranchIds.length === 0 && nextBranches.length > 0
+  const nextState: ProtocolRunForEachStepState = {
+    ...forEachState,
+    branches: nextBranches,
+    waitingOnBranchIds,
+    joinReady,
+    joinCompletedAt: joinReady && !forEachState.joinCompletedAt ? now(deps) : forEachState.joinCompletedAt || null,
+  }
+
+  const updatedParent = updateRun(parent.id, (current) => ({
+    ...current,
+    forEachState: {
+      ...(current.forEachState || {}),
+      [child.parentStepId!]: nextState,
+    },
+    updatedAt: now(deps),
+  }))
+  if (!updatedParent) return null
+
+  if (isTerminalProtocolRunStatus(child.status)) {
+    appendProtocolEvent(updatedParent.id, {
+      type: child.status === 'completed' ? 'parallel_branch_completed' : 'parallel_branch_failed',
+      stepId: child.parentStepId,
+      summary: `For-each branch "${child.branchId || child.id}" ${child.status}.`,
+      data: { branchId: child.branchId, childRunId: child.id, status: child.status },
+    }, deps)
+  }
+
+  if (joinReady && !forEachState.joinReady) {
+    appendProtocolEvent(updatedParent.id, {
+      type: 'join_ready',
+      stepId: child.parentStepId,
+      summary: 'All for-each branches completed. Advancing parent.',
+      data: { childRunIds: nextState.branchRunIds },
+    }, deps)
+  }
+
+  if (joinReady && updatedParent.status === 'waiting') {
+    // Advance past the for_each step
+    const parentStep = findRunStep(updatedParent, child.parentStepId!)
+    if (parentStep) {
+      const nextStepId = parentStep.nextStepId || null
+      const nextIndex = nextStepId && Array.isArray(updatedParent.steps)
+        ? Math.max(0, updatedParent.steps.findIndex((s) => s.id === nextStepId))
+        : Array.isArray(updatedParent.steps) ? updatedParent.steps.length : updatedParent.currentPhaseIndex + 1
+      persistRun({
+        ...updatedParent,
+        status: 'running',
+        currentStepId: nextStepId,
+        currentPhaseIndex: nextIndex,
+        waitingReason: null,
+        updatedAt: now(deps),
+      })
+    }
+    const { requestProtocolRunExecution } = require('@/lib/server/protocols/protocol-run-lifecycle') as typeof import('@/lib/server/protocols/protocol-run-lifecycle')
+    requestProtocolRunExecution(updatedParent.id, deps)
+  }
+  return loadProtocolRunById(updatedParent.id)
 }

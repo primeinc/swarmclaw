@@ -960,7 +960,13 @@ export async function observeAutonomyRunOutcome(
       }
       return ''
     })()
-  const parsed = parseReflectionResponse(responseText)
+  let parsed: ReturnType<typeof parseReflectionResponse>
+  try {
+    parsed = parseReflectionResponse(responseText)
+  } catch {
+    console.warn(`[autonomy] Reflection parse failed for run ${input.runId}, skipping reflection`)
+    return { incidents, reflection: null }
+  }
   if (parsed.skip) return { incidents, reflection: null }
 
   const reflectionId = genId()

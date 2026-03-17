@@ -5,6 +5,7 @@ import { useAppStore } from '@/stores/use-app-store'
 import { useNow } from '@/hooks/use-now'
 import { useWs } from '@/hooks/use-ws'
 import { MainContent } from '@/components/layout/main-content'
+import { PageLoader } from '@/components/ui/page-loader'
 import { timeAgo } from '@/lib/time-format'
 import type { ActivityEntry } from '@/types'
 
@@ -34,9 +35,16 @@ export default function ActivityPage() {
   const entries = useAppStore((s) => s.activityEntries)
   const loadActivity = useAppStore((s) => s.loadActivity)
   const [filterType, setFilterType] = useState('')
+  const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => { loadActivity({ entityType: filterType || undefined, limit: 100 }) }, [filterType, loadActivity])
+  useEffect(() => {
+    void loadActivity({ entityType: filterType || undefined, limit: 100 }).then(() => setLoaded(true))
+  }, [filterType, loadActivity])
   useWs('activity', () => loadActivity({ entityType: filterType || undefined, limit: 100 }), 10_000)
+
+  if (!loaded) {
+    return <MainContent><PageLoader label="Loading activity..." /></MainContent>
+  }
 
   return (
     <MainContent>

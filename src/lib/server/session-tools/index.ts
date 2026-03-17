@@ -37,7 +37,6 @@ import { buildReplicateTools } from './replicate'
 import { buildMailboxTools } from './mailbox'
 import { buildHumanLoopTools } from './human-loop'
 import { buildGoogleWorkspaceTools } from './google-workspace'
-// http_request consolidated into web 'api' action — buildHttpTools removed
 import { buildSkillRuntimeTools } from './skill-runtime'
 import { buildConnectorTools } from './connector'
 import './connector'

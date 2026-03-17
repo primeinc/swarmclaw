@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ButtonHTMLAttributes } from 'react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { PageLoader } from '@/components/ui/page-loader'
 import { SearchInput } from '@/components/ui/search-input'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { SectionHeader } from '@/components/ui/section-header'
@@ -117,9 +118,10 @@ export function ScheduleConsole() {
   const [agentFilter, setAgentFilter] = useState('all')
   const [sortBy, setSortBy] = useState<ScheduleSortBy>('nextRunAt')
   const [busyId, setBusyId] = useState('')
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    void Promise.all([loadSchedules(), loadTasks(), loadAgents()])
+    void Promise.all([loadSchedules(), loadTasks(), loadAgents()]).then(() => setLoaded(true))
   }, [loadAgents, loadSchedules, loadTasks])
   useWs('schedules', loadSchedules, 5_000)
   useWs('tasks', loadTasks, 5_000)
@@ -316,6 +318,10 @@ export function ScheduleConsole() {
   }
 
   const scopeCount = scope === 'runs' ? filteredRuns.length : filteredSchedules.length
+
+  if (!loaded) {
+    return <PageLoader label="Loading schedules..." />
+  }
 
   return (
     <div className="flex-1 overflow-y-auto">

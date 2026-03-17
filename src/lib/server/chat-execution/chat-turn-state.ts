@@ -16,6 +16,7 @@ export interface TurnStateSnapshot {
   hasToolCalls: boolean
   toolEventCount: number
   loopDetectionTriggered: LoopDetectionResult | null
+  toolFrequencyBlocked: string | false
   terminalToolBoundary: 'memory_write' | 'durable_wait' | 'context_compaction' | null
   memoryWriteTerminalAllowed: boolean | null
 }
@@ -34,6 +35,7 @@ export class ChatTurnState {
   currentToolInputTokens = 0
   usedToolNames = new Set<string>()
   loopDetectionTriggered: LoopDetectionResult | null = null
+  toolFrequencyBlocked: string | false = false
   terminalToolBoundary: 'memory_write' | 'durable_wait' | 'context_compaction' | null = null
   terminalToolResponse = ''
   memoryWriteTerminalAllowed: boolean | null = null
@@ -48,6 +50,7 @@ export class ChatTurnState {
       hasToolCalls: this.hasToolCalls,
       toolEventCount: this.streamedToolEvents.length,
       loopDetectionTriggered: this.loopDetectionTriggered,
+      toolFrequencyBlocked: this.toolFrequencyBlocked,
       terminalToolBoundary: this.terminalToolBoundary,
       memoryWriteTerminalAllowed: this.memoryWriteTerminalAllowed,
     }
@@ -62,6 +65,7 @@ export class ChatTurnState {
     this.hasToolCalls = snap.hasToolCalls
     this.streamedToolEvents.length = snap.toolEventCount
     this.loopDetectionTriggered = snap.loopDetectionTriggered
+    this.toolFrequencyBlocked = snap.toolFrequencyBlocked
     this.terminalToolBoundary = snap.terminalToolBoundary
     this.memoryWriteTerminalAllowed = snap.memoryWriteTerminalAllowed
   }

@@ -91,7 +91,7 @@ describe('delegation-jobs', () => {
       startedAt: Date.now() - 60_000,
     })
 
-    const recovered = delegationJobs.recoverStaleDelegationJobs(-1)
+    const recovered = delegationJobs.recoverStaleDelegationJobs({ maxAgeMs: -1 })
     const latest = delegationJobs.getDelegationJob(stale.id)
 
     assert.equal(recovered >= 1, true)

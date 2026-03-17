@@ -1,10 +1,12 @@
 'use client'
 
 import { DEFAULT_HEARTBEAT_INTERVAL_SEC } from '@/lib/runtime/heartbeat-defaults'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import type { Agent } from '@/types'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import type { Agent, MemoryEntry, Session } from '@/types'
 import { useAppStore } from '@/stores/use-app-store'
+import { useChatStore } from '@/stores/use-chat-store'
 import { api } from '@/lib/app/api-client'
+import { dedup } from '@/lib/shared-utils'
 import { AgentAvatar } from './agent-avatar'
 import { AgentFilesEditor } from './agent-files-editor'
 import { OpenClawSkillsPanel } from './openclaw-skills-panel'
@@ -15,25 +17,33 @@ import { CronJobForm } from './cron-job-form'
 import { toast } from 'sonner'
 import { StatusDot } from '@/components/ui/status-dot'
 import { normalizeAgentSandboxConfig } from '@/lib/agent-sandbox-defaults'
-import { getEnabledToolIds } from '@/lib/capability-selection'
+import { getEnabledToolIds, getEnabledExtensionIds, getEnabledCapabilityIds } from '@/lib/capability-selection'
+import { searchMemory } from '@/lib/memory'
+import { ConnectorPlatformIcon, getSessionConnector } from '@/components/shared/connector-platform-icon'
+import { useNavigate } from '@/lib/app/navigation'
+import { formatDurationSec } from '@/lib/format-display'
+import { ModelCombobox } from '@/components/shared/model-combobox'
+import { buildOpenClawMainSessionKey } from '@/lib/openclaw/openclaw-agent-id'
+import { StructuredSessionLauncher } from '@/components/protocols/structured-session-launcher'
+import { useWs } from '@/hooks/use-ws'
 
 interface Props {
   agent: Agent
+  session: Session
   onEditAgent?: () => void
+  onDuplicateAgent?: () => void
   onClearHistory?: () => void
   onDeleteAgent?: () => void
   onDeleteChat?: () => void
   isMainChat?: boolean
 }
 
-type InspectorTab = 'overview' | 'files' | 'skills' | 'automations' | 'advanced'
+type InspectorTab = 'dashboard' | 'config' | 'files'
 
 const TABS: { id: InspectorTab; label: string; openclawOnly?: boolean }[] = [
-  { id: 'overview', label: 'Overview' },
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'config', label: 'Config' },
   { id: 'files', label: 'Files', openclawOnly: true },
-  { id: 'skills', label: 'Skills' },
-  { id: 'automations', label: 'Automations' },
-  { id: 'advanced', label: 'Advanced' },
 ]
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -46,6 +56,123 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama',
 }
 
+// ─── Model Switcher (inline in header) ───────────────────────────
+
+function ModelSwitcherInline({ session, agent }: { session: Session; agent: Agent }) {
+  const providers = useAppStore((s) => s.providers)
+  const loadProviders = useAppStore((s) => s.loadProviders)
+  const refreshSession = useAppStore((s) => s.refreshSession)
+  const streaming = useChatStore((s) => s.streaming)
+  const [expanded, setExpanded] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState(agent.provider)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { if (!providers.length) void loadProviders() }, [providers.length, loadProviders])
+  useEffect(() => { setSelectedProvider(agent.provider) }, [agent.provider])
+
+  const currentProviderInfo = providers.find((p) => p.id === selectedProvider)
+  const providerLabel = PROVIDER_LABELS[agent.provider] || agent.provider.replace(/-/g, ' ')
+
+  const handleModelChange = async (model: string) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await api('PUT', `/chats/${session.id}`, { provider: selectedProvider, model })
+      await refreshSession(session.id)
+      setExpanded(false)
+      toast.success(`Switched to ${model}`)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to switch model')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => !streaming && setExpanded(true)}
+        disabled={streaming}
+        className="mt-2 flex items-center gap-1.5 w-full text-left bg-transparent border-none cursor-pointer disabled:cursor-default disabled:opacity-50 group"
+      >
+        <span className="inline-flex items-center rounded-[8px] border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] font-600 text-text-3/70 group-hover:border-white/[0.1] group-hover:text-text-2 transition-colors">
+          {providerLabel}
+        </span>
+        <span className="inline-flex max-w-[180px] items-center rounded-[8px] border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] font-mono text-text-3/70 truncate group-hover:border-white/[0.1] group-hover:text-text-2 transition-colors">
+          {agent.model || 'Default model'}
+        </span>
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-text-3/30 group-hover:text-text-3/60 transition-colors ml-auto shrink-0">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+    )
+  }
+
+  return (
+    <div className="mt-2 rounded-[10px] border border-white/[0.08] bg-black/[0.12] p-2.5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-700 uppercase tracking-[0.12em] text-text-3/45">Switch Model</span>
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="text-[10px] text-text-3/50 hover:text-text-3 bg-transparent border-none cursor-pointer"
+        >
+          Cancel
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1 mb-2">
+        {providers.filter((p) => p.models.length > 0).map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setSelectedProvider(p.id)}
+            className={`px-2 py-0.5 rounded-[6px] text-[10px] font-600 border cursor-pointer transition-colors ${
+              p.id === selectedProvider
+                ? 'bg-accent-soft/50 text-accent-bright border-accent-bright/20'
+                : 'bg-white/[0.02] text-text-3/60 border-white/[0.04] hover:bg-white/[0.05]'
+            }`}
+          >
+            {PROVIDER_LABELS[p.id] || p.name}
+          </button>
+        ))}
+      </div>
+      {currentProviderInfo && (
+        <ModelCombobox
+          providerId={currentProviderInfo.id}
+          value={agent.model || currentProviderInfo.models[0] || ''}
+          onChange={(m) => void handleModelChange(m)}
+          models={currentProviderInfo.models}
+          defaultModels={currentProviderInfo.defaultModels}
+          supportsDiscovery={currentProviderInfo.supportsModelDiscovery}
+          className="w-full"
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Workspace Path ──────────────────────────────────────────────
+
+function WorkspacePath({ cwd }: { cwd: string }) {
+  const display = cwd.replace(/^\/Users\/[^/]+/, '~')
+  const handleClick = () => {
+    api('POST', '/files/open', { path: cwd }).catch(() => {})
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="mt-2 flex items-center gap-1.5 w-full text-left bg-transparent border-none cursor-pointer group"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-text-3/40 shrink-0">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      </svg>
+      <span className="text-[10px] text-text-3/60 font-mono truncate group-hover:text-text-2 transition-colors">{display}</span>
+    </button>
+  )
+}
+
 function panelCardClass(className = '') {
   return `rounded-[16px] border border-white/[0.06] bg-white/[0.03] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${className}`.trim()
 }
@@ -54,21 +181,53 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <label className="block text-[11px] font-700 uppercase tracking-[0.16em] text-text-3/45 mb-2">{children}</label>
 }
 
-export function InspectorPanel({ agent, onEditAgent, onClearHistory, onDeleteAgent, onDeleteChat, isMainChat }: Props) {
+function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onChange}
+      disabled={disabled}
+      className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer border-none disabled:opacity-50 ${on ? 'bg-accent-bright/80' : 'bg-white/[0.08]'}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : ''}`} />
+    </button>
+  )
+}
+
+// --- Wallet helpers (extracted from chat-header) ---
+
+function getAgentWalletIds(agent: { walletIds?: string[]; walletId?: string | null } | null | undefined): string[] {
+  const ids = Array.isArray(agent?.walletIds)
+    ? agent.walletIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : []
+  const legacy = typeof agent?.walletId === 'string' && agent.walletId.trim()
+    ? [agent.walletId.trim()]
+    : []
+  return dedup([...ids, ...legacy])
+}
+
+function getAgentActiveWalletId(agent: { activeWalletId?: string | null; walletIds?: string[]; walletId?: string | null } | null | undefined): string | null {
+  const walletIds = getAgentWalletIds(agent)
+  if (typeof agent?.activeWalletId === 'string' && walletIds.includes(agent.activeWalletId)) return agent.activeWalletId
+  if (typeof agent?.walletId === 'string' && walletIds.includes(agent.walletId)) return agent.walletId
+  return walletIds[0] || null
+}
+
+// --- Main component ---
+
+export function InspectorPanel({ agent, session, onEditAgent, onDuplicateAgent, onClearHistory, onDeleteAgent, onDeleteChat, isMainChat }: Props) {
   const inspectorTab = useAppStore((s) => s.inspectorTab)
   const setInspectorTab = useAppStore((s) => s.setInspectorTab)
   const setInspectorOpen = useAppStore((s) => s.setInspectorOpen)
-  const schedules = useAppStore((s) => s.schedules)
 
   const isOpenClaw = agent.provider === 'openclaw'
   const visibleTabs = TABS.filter((t) => !t.openclawOnly || isOpenClaw)
 
-  // Reset to overview if current tab is not visible
+  // Reset to dashboard if current tab is not visible
   useEffect(() => {
     if (!visibleTabs.find((t) => t.id === inspectorTab)) {
-      setInspectorTab('overview')
+      setInspectorTab('dashboard')
     }
-  }, [inspectorTab, setInspectorTab, visibleTabs])  
+  }, [inspectorTab, setInspectorTab, visibleTabs])
 
   // Close on Escape
   useEffect(() => {
@@ -78,9 +237,6 @@ export function InspectorPanel({ agent, onEditAgent, onClearHistory, onDeleteAge
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [setInspectorOpen])
-
-  const agentSchedules = Object.values(schedules).filter((s) => s.agentId === agent.id)
-  const providerLabel = PROVIDER_LABELS[agent.provider] || agent.provider.replace(/-/g, ' ')
 
   return (
     <div className="w-[420px] shrink-0 border-l border-white/[0.06] bg-bg flex flex-col h-full overflow-hidden fade-up-delay"
@@ -105,17 +261,6 @@ export function InspectorPanel({ agent, onEditAgent, onClearHistory, onDeleteAge
                 </span>
               )}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center rounded-[8px] border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] font-600 text-text-3/70">
-                {providerLabel}
-              </span>
-              <span className="inline-flex max-w-[180px] items-center rounded-[8px] border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] font-mono text-text-3/70 truncate">
-                {agent.model || 'Default model'}
-              </span>
-              <span className="inline-flex items-center rounded-[8px] border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[10px] font-600 text-text-3/70">
-                {getEnabledToolIds(agent).length} tools
-              </span>
-            </div>
           </div>
         <button
           onClick={() => setInspectorOpen(false)}
@@ -128,6 +273,8 @@ export function InspectorPanel({ agent, onEditAgent, onClearHistory, onDeleteAge
           </svg>
         </button>
         </div>
+        <ModelSwitcherInline session={session} agent={agent} />
+        {session.cwd && <WorkspacePath cwd={session.cwd} />}
       </div>
 
       {/* Tab bar */}
@@ -153,65 +300,741 @@ export function InspectorPanel({ agent, onEditAgent, onClearHistory, onDeleteAge
 
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {inspectorTab === 'overview' && (
-          <OverviewTab
-            agent={agent}
-            onEditAgent={onEditAgent}
-            onClearHistory={onClearHistory}
-            onDeleteAgent={onDeleteAgent}
-            onDeleteChat={onDeleteChat}
-            isMainChat={isMainChat}
-          />
+        {inspectorTab === 'dashboard' && (
+          <DashboardTab agent={agent} session={session} />
+        )}
+        {inspectorTab === 'config' && (
+          <ConfigTab agent={agent} />
         )}
         {inspectorTab === 'files' && isOpenClaw && (
           <AgentFilesEditor agentId={agent.id} />
         )}
-        {inspectorTab === 'skills' && (
-          isOpenClaw ? (
-            <OpenClawSkillsPanel
-              agentId={agent.id}
-              initialMode={agent.openclawSkillMode}
-              initialAllowed={agent.openclawAllowedSkills}
-            />
-          ) : (
-            <div className="p-4 text-[13px] text-text-3/50">
-              Local skills are configured in the agent editor.
-            </div>
+      </div>
+
+      {/* Sticky footer */}
+      <StickyFooter
+        agent={agent}
+        isMainChat={isMainChat}
+        onEditAgent={onEditAgent}
+        onDuplicateAgent={onDuplicateAgent}
+        onClearHistory={onClearHistory}
+        onDeleteAgent={onDeleteAgent}
+        onDeleteChat={onDeleteChat}
+      />
+    </div>
+  )
+}
+
+// ─── Dashboard Tab ───────────────────────────────────────────────
+
+function DashboardTab({ agent, session }: { agent: Agent; session: Session }) {
+  return (
+    <div className="p-4 flex flex-col gap-4">
+      <IdentityCard agent={agent} />
+      {agent.provider === 'openclaw' && <OpenClawActionsSection agent={agent} />}
+      <HeartbeatSection agent={agent} session={session} />
+      <WalletSection agent={agent} />
+      <ToolsSection agent={agent} session={session} />
+      <AudioSection />
+      <MemorySection agentId={agent.id} />
+      <SessionsSection agent={agent} />
+      <QuickActionsSection agent={agent} session={session} />
+    </div>
+  )
+}
+
+// ─── Identity Card ───────────────────────────────────────────────
+
+function IdentityCard({ agent }: { agent: Agent }) {
+  const loadAgents = useAppStore((s) => s.loadAgents)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(agent.description || '')
+  const [saving, setSaving] = useState(false)
+  const [promptExpanded, setPromptExpanded] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const startEdit = () => {
+    setDraft(agent.description || '')
+    setEditing(true)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setDraft(agent.description || '')
+  }
+
+  const saveDescription = async () => {
+    const trimmed = draft.trim()
+    if (trimmed === (agent.description || '').trim()) {
+      setEditing(false)
+      return
+    }
+    setSaving(true)
+    try {
+      await api('PUT', `/agents/${agent.id}`, { description: trimmed })
+      await loadAgents()
+      setEditing(false)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update description')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className={panelCardClass('p-4 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))]')}>
+      {editing ? (
+        <div>
+          <SectionLabel>Description</SectionLabel>
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => void saveDescription()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') cancelEdit()
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void saveDescription()
+            }}
+            disabled={saving}
+            placeholder="Add a description..."
+            className="w-full min-h-[60px] rounded-[10px] border border-accent-bright/30 bg-black/[0.14] p-3 text-[13px] text-text-2 leading-relaxed outline-none resize-none font-sans"
+          />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={startEdit}
+          className="group w-full text-left bg-transparent border-none cursor-pointer p-0"
+        >
+          <p className="text-[13px] text-text-2 leading-relaxed">
+            {agent.description || <span className="text-text-3/40 italic">Add a description...</span>}
+          </p>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="mt-1 text-text-3/30 opacity-0 group-hover:opacity-100 transition-opacity">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+      )}
+
+      {agent.systemPrompt && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setPromptExpanded((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] font-600 text-text-3/50 hover:text-text-3/70 bg-transparent border-none cursor-pointer transition-colors"
+          >
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`transition-transform ${promptExpanded ? 'rotate-90' : ''}`}>
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+            System prompt
+          </button>
+          {promptExpanded && (
+            <p className="mt-2 text-[12px] text-text-3 bg-black/[0.14] rounded-[12px] p-3 border border-white/[0.04] max-h-[220px] overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
+              {agent.systemPrompt}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Heartbeat Section ───────────────────────────────────────────
+
+function HeartbeatSection({ agent, session }: { agent: Agent; session: Session }) {
+  const appSettings = useAppStore((s) => s.appSettings)
+  const updateAgentInStore = useAppStore((s) => s.updateAgentInStore)
+  const updateSessionInStore = useAppStore((s) => s.updateSessionInStore)
+  const [heartbeatSaving, setHeartbeatSaving] = useState(false)
+  const [hbDropdownOpen, setHbDropdownOpen] = useState(false)
+  const hbDropdownRef = useRef<HTMLDivElement>(null)
+
+  const heartbeatSupported = getEnabledCapabilityIds(session).length > 0
+  const loopIsOngoing = appSettings.loopMode === 'ongoing'
+
+  const { heartbeatEnabled, heartbeatIntervalSec, heartbeatExplicitOptIn } = useMemo(() => {
+    const parseDur = (v: unknown): number | null => {
+      if (v === null || v === undefined) return null
+      if (typeof v === 'number') return Number.isFinite(v) ? Math.max(0, Math.min(86400, Math.trunc(v))) : null
+      if (typeof v !== 'string') return null
+      const t = v.trim().toLowerCase()
+      if (!t) return null
+      const n = Number(t)
+      if (Number.isFinite(n)) return Math.max(0, Math.min(86400, Math.trunc(n)))
+      const m = t.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/)
+      if (!m || (!m[1] && !m[2] && !m[3])) return null
+      const total = (m[1] ? parseInt(m[1]) * 3600 : 0) + (m[2] ? parseInt(m[2]) * 60 : 0) + (m[3] ? parseInt(m[3]) : 0)
+      return Math.max(0, Math.min(86400, total))
+    }
+    const resolveFrom = (obj: { heartbeatInterval?: string | number | null; heartbeatIntervalSec?: number | null }): number | null => {
+      const dur = parseDur(obj.heartbeatInterval)
+      if (dur !== null) return dur
+      const sec = parseDur(obj.heartbeatIntervalSec)
+      if (sec !== null) return sec
+      return null
+    }
+    let sec = resolveFrom(appSettings) ?? DEFAULT_HEARTBEAT_INTERVAL_SEC
+    let enabled = sec > 0
+    let explicitOptIn = false
+    if (agent) {
+      if (agent.heartbeatEnabled === false) enabled = false
+      if (agent.heartbeatEnabled === true) { enabled = true; explicitOptIn = true }
+      sec = resolveFrom(agent) ?? sec
+    }
+    return {
+      heartbeatEnabled: enabled && sec > 0,
+      heartbeatIntervalSec: sec,
+      heartbeatExplicitOptIn: explicitOptIn,
+    }
+  }, [appSettings, agent])
+
+  const heartbeatWillRun = heartbeatEnabled && (loopIsOngoing || heartbeatExplicitOptIn)
+
+  // Don't render if heartbeat is not relevant
+  if (!heartbeatSupported) return null
+
+  const handleToggleHeartbeat = async () => {
+    if (heartbeatSaving) return
+    setHeartbeatSaving(true)
+    try {
+      const next = !heartbeatEnabled
+      if (session.agentId) {
+        const updatedAgent = await api<Agent>('PUT', `/agents/${session.agentId}`, { heartbeatEnabled: next })
+        updateAgentInStore(updatedAgent)
+        const updatedSession = await api<Session>('PUT', `/chats/${session.id}`, { heartbeatEnabled: null })
+        updateSessionInStore(updatedSession)
+      } else {
+        const updatedSession = await api<Session>('PUT', `/chats/${session.id}`, { heartbeatEnabled: next })
+        updateSessionInStore(updatedSession)
+      }
+      toast.success(`Heartbeat ${next ? 'enabled' : 'disabled'}`)
+    } finally {
+      setHeartbeatSaving(false)
+    }
+  }
+
+  const handleSelectInterval = async (sec: number) => {
+    if (heartbeatSaving) return
+    setHbDropdownOpen(false)
+    setHeartbeatSaving(true)
+    try {
+      if (session.agentId) {
+        const updatedAgent = await api<Agent>('PUT', `/agents/${session.agentId}`, {
+          heartbeatInterval: formatDurationSec(sec),
+          heartbeatIntervalSec: sec,
+        })
+        updateAgentInStore(updatedAgent)
+        const updatedSession = await api<Session>('PUT', `/chats/${session.id}`, { heartbeatIntervalSec: null, heartbeatEnabled: null })
+        updateSessionInStore(updatedSession)
+      } else {
+        const updatedSession = await api<Session>('PUT', `/chats/${session.id}`, { heartbeatIntervalSec: sec })
+        updateSessionInStore(updatedSession)
+      }
+    } finally {
+      setHeartbeatSaving(false)
+    }
+  }
+
+  const intervalOptions = [1800, 3600, 7200, 21600, 43200]
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <div className="flex items-center justify-between mb-2">
+        <SectionLabel>Heartbeat</SectionLabel>
+        <ToggleSwitch on={heartbeatWillRun} onChange={() => void handleToggleHeartbeat()} disabled={heartbeatSaving} />
+      </div>
+      {heartbeatWillRun && (
+        <div className="flex items-center gap-2 text-[12px] text-text-3/70">
+          <span>Every</span>
+          <div className="relative" ref={hbDropdownRef}>
+            <button
+              onClick={() => setHbDropdownOpen((o) => !o)}
+              disabled={heartbeatSaving}
+              className="px-2 py-0.5 rounded-[6px] bg-white/[0.04] hover:bg-white/[0.08] text-text-2 text-[12px] font-600 cursor-pointer border-none transition-colors"
+            >
+              {formatDurationSec(heartbeatIntervalSec)}
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="inline ml-1 opacity-40">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {hbDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 py-1 rounded-[10px] border border-white/[0.06] bg-bg/95 backdrop-blur-md shadow-lg z-50 min-w-[88px]">
+                {intervalOptions.map((sec) => (
+                  <button
+                    key={sec}
+                    onClick={() => void handleSelectInterval(sec)}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] font-600 transition-colors cursor-pointer border-none
+                      ${sec === heartbeatIntervalSec ? 'bg-accent-soft text-accent-bright' : 'text-text-3 hover:bg-white/[0.06]'}`}
+                  >
+                    {formatDurationSec(sec)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {agent.heartbeatModel && (
+            <span className="text-text-3/50 text-[11px]">({agent.heartbeatModel})</span>
+          )}
+        </div>
+      )}
+      {heartbeatEnabled && !heartbeatWillRun && (
+        <p className="text-[11px] text-amber-300/60">Bounded — runs only when loop mode is ongoing</p>
+      )}
+      {heartbeatWillRun && (
+        <button
+          type="button"
+          onClick={() => {
+            useAppStore.getState().setHeartbeatHistoryOpen(true)
+            useAppStore.getState().setInspectorOpen(false)
+          }}
+          className="mt-2 flex items-center gap-1.5 w-full text-[11px] font-600 text-accent-bright/60 hover:text-accent-bright bg-transparent border-none cursor-pointer transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          View History
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Wallet Section ──────────────────────────────────────────────
+
+function WalletSection({ agent }: { agent: Agent }) {
+  const setWalletPanelAgentId = useAppStore((s) => s.setWalletPanelAgentId)
+  const navigateTo = useNavigate()
+  const agentWalletIds = useMemo(() => getAgentWalletIds(agent), [agent])
+  const activeWalletId = useMemo(() => getAgentActiveWalletId(agent), [agent])
+  const [walletBalance, setWalletBalance] = useState<{ formatted: string; symbol: string; assets?: number } | null>(null)
+
+  useEffect(() => {
+    if (!activeWalletId) return
+    let cancelled = false
+    api<{ balanceFormatted?: string; balanceSymbol?: string; portfolioSummary?: { nonZeroAssets?: number } }>('GET', `/wallets/${activeWalletId}?cached=1`)
+      .then((data) => {
+        if (cancelled) return
+        if (data.balanceFormatted && data.balanceSymbol) {
+          setWalletBalance({
+            formatted: data.balanceFormatted,
+            symbol: data.balanceSymbol,
+            assets: typeof data.portfolioSummary?.nonZeroAssets === 'number' ? data.portfolioSummary.nonZeroAssets : undefined,
+          })
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [activeWalletId])
+
+  if (agentWalletIds.length === 0) return null
+
+  const handleClick = () => {
+    setWalletPanelAgentId(agent.id)
+    navigateTo('wallets')
+  }
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>Wallet</SectionLabel>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="flex items-center gap-2 w-full bg-transparent border-none cursor-pointer text-left group"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-text-3/50 shrink-0">
+          <rect x="2" y="6" width="20" height="14" rx="2" />
+          <path d="M22 10H18a2 2 0 0 0 0 4h4" />
+        </svg>
+        {walletBalance ? (
+          <span className="text-[13px] text-text-2 font-600 group-hover:text-accent-bright transition-colors">
+            {walletBalance.formatted} {walletBalance.symbol}
+            {walletBalance.assets && walletBalance.assets > 1 ? ` +${walletBalance.assets - 1} assets` : ''}
+          </span>
+        ) : (
+          <span className="text-[13px] text-text-3/50 group-hover:text-text-3 transition-colors">View wallet</span>
+        )}
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="ml-auto text-text-3/30 group-hover:text-text-3/60 transition-colors shrink-0">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
+// ─── Tools Section ───────────────────────────────────────────────
+
+function ToolsSection({ agent, session }: { agent: Agent; session: Session }) {
+  const refreshSession = useAppStore((s) => s.refreshSession)
+  const agentToolIds = getEnabledToolIds(agent)
+  const sessionToolIds = getEnabledToolIds(session)
+  const sessionExtensions = getEnabledExtensionIds(session)
+  const [collapsed, setCollapsed] = useState(agentToolIds.length >= 10)
+
+  if (agentToolIds.length === 0) return null
+
+  const displayTools = collapsed ? agentToolIds.slice(0, 8) : agentToolIds
+
+  const toggleTool = async (toolId: string) => {
+    const updated = sessionToolIds.includes(toolId)
+      ? sessionToolIds.filter((t) => t !== toolId)
+      : [...sessionToolIds, toolId]
+    await api('PUT', `/chats/${session.id}`, {
+      tools: updated,
+      extensions: sessionExtensions,
+    })
+    await refreshSession(session.id)
+  }
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>Tools ({sessionToolIds.length}/{agentToolIds.length})</SectionLabel>
+      <div className="flex flex-wrap gap-1.5">
+        {displayTools.map((toolId) => {
+          const enabled = sessionToolIds.includes(toolId)
+          return (
+            <button
+              key={toolId}
+              type="button"
+              onClick={() => void toggleTool(toolId)}
+              className={`px-2.5 py-1 rounded-[8px] text-[11px] font-700 border cursor-pointer transition-all ${
+                enabled
+                  ? 'bg-sky-400/[0.08] text-sky-300 border-sky-400/[0.08] hover:bg-sky-400/[0.15]'
+                  : 'bg-white/[0.02] text-text-3/35 border-white/[0.04] hover:bg-white/[0.05] hover:text-text-3/55'
+              }`}
+            >
+              {toolId}
+            </button>
           )
-        )}
-        {inspectorTab === 'automations' && (
-          <AutomationsTab schedules={agentSchedules} agent={agent} />
-        )}
-        {inspectorTab === 'advanced' && (
-          <AdvancedTab agent={agent} />
-        )}
+        })}
+      </div>
+      {agentToolIds.length >= 10 && (
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="mt-2 text-[10px] font-600 text-text-3/50 hover:text-text-3/70 bg-transparent border-none cursor-pointer transition-colors"
+        >
+          {collapsed ? `Show all ${agentToolIds.length} tools` : 'Show fewer'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Audio Section ───────────────────────────────────────────────
+
+function AudioSection() {
+  const ttsEnabled = useChatStore((s) => s.ttsEnabled)
+  const toggleTts = useChatStore((s) => s.toggleTts)
+  const soundEnabled = useChatStore((s) => s.soundEnabled)
+  const toggleSound = useChatStore((s) => s.toggleSound)
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>Audio</SectionLabel>
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] text-text-2">Read aloud (TTS)</span>
+          <ToggleSwitch on={ttsEnabled} onChange={toggleTts} />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] text-text-2">Notification sounds</span>
+          <ToggleSwitch on={soundEnabled} onChange={toggleSound} />
+        </div>
       </div>
     </div>
   )
 }
 
-interface OverviewTabProps {
+// ─── Memory Section ──────────────────────────────────────────────
+
+function MemorySection({ agentId }: { agentId: string }) {
+  const setMemoryAgentFilter = useAppStore((s) => s.setMemoryAgentFilter)
+  const memoryRefreshKey = useAppStore((s) => s.memoryRefreshKey)
+  const setSidebarOpen = useAppStore((s) => s.setSidebarOpen)
+  const navigateTo = useNavigate()
+  const [entries, setEntries] = useState<MemoryEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    searchMemory({ agentId, limit: 5 })
+      .then((data) => { if (!cancelled) { setEntries(Array.isArray(data) ? data : []); setLoading(false) } })
+      .catch(() => { if (!cancelled) { setEntries([]); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [agentId, memoryRefreshKey])
+
+  const handleViewAll = () => {
+    setMemoryAgentFilter(agentId)
+    navigateTo('memory')
+    setSidebarOpen(true)
+  }
+
+  const tierColor = (category: string) => {
+    if (category.includes('working') || category === 'working') return 'text-amber-300 bg-amber-400/10 border-amber-400/15'
+    if (category.includes('durable') || category === 'durable') return 'text-emerald-300 bg-emerald-400/10 border-emerald-400/15'
+    if (category.includes('archive') || category === 'archive') return 'text-blue-300 bg-blue-400/10 border-blue-400/15'
+    return 'text-text-3/60 bg-white/[0.04] border-white/[0.06]'
+  }
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <div className="flex items-center justify-between mb-2">
+        <SectionLabel>Memory</SectionLabel>
+        {entries.length > 0 && (
+          <button
+            type="button"
+            onClick={handleViewAll}
+            className="text-[10px] font-600 text-accent-bright/60 hover:text-accent-bright bg-transparent border-none cursor-pointer transition-colors"
+          >
+            View all &raquo;
+          </button>
+        )}
+      </div>
+      {loading ? (
+        <div className="flex flex-col gap-2">
+          {[0, 1, 2].map((i) => <div key={i} className="h-6 rounded-[8px] bg-white/[0.04] animate-pulse" />)}
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="text-[12px] text-text-3/40 italic">No memories yet</p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {entries.map((entry) => (
+            <div key={entry.id} className="flex items-start gap-2">
+              <span className={`shrink-0 px-1.5 py-0.5 rounded-[5px] text-[9px] font-700 uppercase tracking-wider border ${tierColor(entry.category)}`}>
+                {entry.category}
+              </span>
+              <span className="text-[11px] text-text-3/70 truncate flex-1">{entry.title || entry.content}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── OpenClaw Actions Section ────────────────────────────────────
+
+function OpenClawActionsSection({ agent }: { agent: Agent }) {
+  const [dashboardUrl, setDashboardUrl] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api<{ url?: string }>('GET', `/openclaw/dashboard-url?agentId=${encodeURIComponent(agent.id)}`)
+      .then((data) => { if (!cancelled && data.url) setDashboardUrl(data.url) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [agent.id])
+
+  const handleSync = async () => {
+    if (syncing) return
+    const sessionKey = buildOpenClawMainSessionKey(agent.name)
+    if (!sessionKey) return
+    setSyncing(true)
+    setSyncStatus(null)
+    try {
+      const history = await api<unknown>('GET', `/openclaw/history?sessionKey=${encodeURIComponent(sessionKey)}`)
+      await api('POST', '/openclaw/history', history)
+      setSyncStatus('Synced')
+    } catch {
+      setSyncStatus('Sync failed')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncStatus(null), 3000)
+    }
+  }
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>OpenClaw</SectionLabel>
+      <div className="flex flex-col gap-2">
+        {dashboardUrl && (
+          <a
+            href={dashboardUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-[12px] text-accent-bright/70 hover:text-accent-bright transition-colors no-underline"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+            Dashboard
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleSync()}
+          disabled={syncing}
+          className="flex items-center gap-2 text-[12px] font-600 text-text-2 hover:text-text bg-transparent border-none cursor-pointer transition-colors disabled:opacity-50 text-left"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`shrink-0 ${syncing ? 'animate-spin' : ''}`}>
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+          </svg>
+          {syncStatus || 'Sync History'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Quick Actions Section ───────────────────────────────────────
+
+function QuickActionsSection({ agent, session }: { agent: Agent; session: Session }) {
+  const messages = useChatStore((s) => s.messages)
+  const [draftingSkill, setDraftingSkill] = useState(false)
+  const [launcherOpen, setLauncherOpen] = useState(false)
+  const [activeRuns, setActiveRuns] = useState<Array<{ id: string; title?: string; status: string }>>([])
+
+  const loadRuns = useCallback(() => {
+    api<Array<{ id: string; title?: string; status: string }>>('GET', `/protocols/runs?sessionId=${encodeURIComponent(session.id)}&limit=6`)
+      .then((runs) => { if (Array.isArray(runs)) setActiveRuns(runs.filter((r) => r.status === 'running' || r.status === 'paused')) })
+      .catch(() => {})
+  }, [session.id])
+
+  useEffect(() => { loadRuns() }, [loadRuns])
+  useWs('protocol_runs', loadRuns)
+
+  const handleDraftSkill = async () => {
+    if (draftingSkill) return
+    setDraftingSkill(true)
+    try {
+      await api('POST', '/skill-suggestions', { sessionId: session.id })
+      toast.success('Skill draft created')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to draft skill')
+    } finally {
+      setDraftingSkill(false)
+    }
+  }
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>Quick Actions</SectionLabel>
+      <div className="flex flex-col gap-2">
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleDraftSkill()}
+            disabled={draftingSkill}
+            className="flex items-center gap-2 text-[12px] font-600 text-text-2 hover:text-text bg-transparent border-none cursor-pointer transition-colors disabled:opacity-50 text-left"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`shrink-0 ${draftingSkill ? 'animate-pulse' : ''}`}>
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+            </svg>
+            {draftingSkill ? 'Drafting...' : 'Draft Skill'}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setLauncherOpen(true)}
+          className="flex items-center gap-2 text-[12px] font-600 text-text-2 hover:text-text bg-transparent border-none cursor-pointer transition-colors text-left"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 9h18" />
+            <path d="M9 21V9" />
+          </svg>
+          Start Structured Session
+        </button>
+        {activeRuns.map((run) => (
+          <span key={run.id} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-[7px] border border-emerald-400/15 bg-emerald-400/10 text-[10px] font-600 text-emerald-300">
+            <StatusDot status="online" size="sm" />
+            {run.title || 'Active session'}
+          </span>
+        ))}
+      </div>
+      <StructuredSessionLauncher
+        open={launcherOpen}
+        onClose={() => setLauncherOpen(false)}
+        initialContext={{ sessionId: session.id, participantAgentIds: [agent.id] }}
+      />
+    </div>
+  )
+}
+
+// ─── Sessions Section ────────────────────────────────────────────
+
+function SessionsSection({ agent }: { agent: Agent }) {
+  const sessions = useAppStore((s) => s.sessions)
+  const connectors = useAppStore((s) => s.connectors)
+  const agents = useAppStore((s) => s.agents)
+  const setCurrentAgent = useAppStore((s) => s.setCurrentAgent)
+
+  const agentSessions = useMemo(() => {
+    return Object.values(sessions).filter((s) => s.agentId === agent.id)
+  }, [sessions, agent.id])
+
+  if (agentSessions.length === 0) return null
+
+  return (
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>Sessions ({agentSessions.length})</SectionLabel>
+      <div className="flex flex-col gap-1.5">
+        {agentSessions.map((s) => {
+          const connector = getSessionConnector(s, connectors)
+          const delegatedByAgentId = (s as unknown as Record<string, unknown>).delegatedByAgentId as string | undefined
+          const delegatedBy = delegatedByAgentId ? agents[delegatedByAgentId] : null
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => void setCurrentAgent(agent.id)}
+              className="flex items-center gap-2 w-full py-1.5 px-2 rounded-[8px] bg-transparent border-none cursor-pointer hover:bg-white/[0.04] transition-colors text-left"
+            >
+              {connector ? (
+                <ConnectorPlatformIcon platform={connector.platform} size={14} />
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-text-3/40 shrink-0">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+                </svg>
+              )}
+              <span className="text-[12px] text-text-2 truncate flex-1">{s.name}</span>
+              {delegatedBy && (
+                <span className="text-[9px] text-amber-300/60 font-600 shrink-0">from {delegatedBy.name}</span>
+              )}
+              <StatusDot status={s.active ? 'online' : 'idle'} size="sm" />
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Sticky Footer ───────────────────────────────────────────────
+
+function StickyFooter({ agent, isMainChat, onEditAgent, onDuplicateAgent, onClearHistory, onDeleteAgent, onDeleteChat }: {
   agent: Agent
+  isMainChat?: boolean
   onEditAgent?: () => void
+  onDuplicateAgent?: () => void
   onClearHistory?: () => void
   onDeleteAgent?: () => void
   onDeleteChat?: () => void
-  isMainChat?: boolean
-}
-
-function OverviewTab({ agent, onEditAgent, onClearHistory, onDeleteAgent, onDeleteChat, isMainChat }: OverviewTabProps) {
+}) {
   const loadAgents = useAppStore((s) => s.loadAgents)
   const loadSessions = useAppStore((s) => s.loadSessions)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [availabilitySaving, setAvailabilitySaving] = useState(false)
-  const summaryStats = [
-    { label: 'Provider', value: PROVIDER_LABELS[agent.provider] || agent.provider.replace(/-/g, ' ') },
-    { label: 'Model', value: agent.model || 'Default' },
-    { label: 'Tools', value: String(getEnabledToolIds(agent).length) },
-    { label: 'Heartbeat', value: agent.heartbeatEnabled ? `Every ${agent.heartbeatIntervalSec ?? DEFAULT_HEARTBEAT_INTERVAL_SEC}s` : 'Off' },
-    { label: 'Status', value: agent.disabled === true ? 'Disabled' : 'Enabled' },
-  ]
+  const menuRef = useRef<HTMLDivElement>(null)
 
-  const handleToggleAvailability = useCallback(async () => {
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
+  const handleToggleAvailability = async () => {
     if (availabilitySaving) return
     setAvailabilitySaving(true)
     try {
@@ -224,127 +1047,184 @@ function OverviewTab({ agent, onEditAgent, onClearHistory, onDeleteAgent, onDele
     } finally {
       setAvailabilitySaving(false)
     }
-  }, [agent.disabled, agent.id, agent.name, availabilitySaving, loadAgents, loadSessions])
+  }
+
+  return (
+    <div className="shrink-0 border-t border-white/[0.06] px-4 py-3 bg-black/[0.08]">
+      <div className="flex items-center gap-2">
+        {onEditAgent && (
+          <button
+            onClick={onEditAgent}
+            className="flex-1 px-3 py-2 rounded-[10px] text-[12px] font-700 text-accent-bright bg-accent-soft/50 border border-accent-bright/10 cursor-pointer transition-all hover:bg-accent-soft text-center"
+            style={{ fontFamily: 'inherit' }}
+          >
+            Edit Agent
+          </button>
+        )}
+        {onDuplicateAgent && (
+          <button
+            onClick={onDuplicateAgent}
+            className="flex-1 px-3 py-2 rounded-[10px] text-[12px] font-700 text-sky-300 bg-sky-400/[0.06] border border-sky-400/[0.1] cursor-pointer transition-all hover:bg-sky-400/[0.1] text-center"
+            style={{ fontFamily: 'inherit' }}
+          >
+            Duplicate
+          </button>
+        )}
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="p-2 rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-text-3/60 hover:text-text-2 hover:bg-white/[0.06] cursor-pointer transition-all"
+            style={{ fontFamily: 'inherit' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <circle cx="12" cy="6" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="18" r="1" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="absolute bottom-full right-0 mb-1.5 py-1 rounded-[10px] border border-white/[0.08] bg-bg/95 backdrop-blur-md shadow-xl z-50 min-w-[160px]"
+              style={{ animation: 'fade-in 0.15s ease' }}>
+              <button
+                onClick={() => { setMenuOpen(false); void handleToggleAvailability() }}
+                disabled={availabilitySaving}
+                className="w-full text-left px-3 py-2 text-[12px] font-600 text-text-2 hover:bg-white/[0.06] cursor-pointer border-none transition-colors disabled:opacity-50"
+              >
+                {agent.disabled === true ? 'Enable Agent' : 'Disable Agent'}
+              </button>
+              {onClearHistory && (
+                <button
+                  onClick={() => { setMenuOpen(false); onClearHistory() }}
+                  className="w-full text-left px-3 py-2 text-[12px] font-600 text-red-400/80 hover:bg-red-400/[0.06] hover:text-red-400 cursor-pointer border-none transition-colors"
+                >
+                  Clear History
+                </button>
+              )}
+              {onDeleteAgent && !isMainChat && (
+                <button
+                  onClick={() => { setMenuOpen(false); onDeleteAgent() }}
+                  className="w-full text-left px-3 py-2 text-[12px] font-600 text-red-400/80 hover:bg-red-400/[0.06] hover:text-red-400 cursor-pointer border-none transition-colors"
+                >
+                  Delete Agent
+                </button>
+              )}
+              {onDeleteChat && !isMainChat && (
+                <button
+                  onClick={() => { setMenuOpen(false); onDeleteChat() }}
+                  className="w-full text-left px-3 py-2 text-[12px] font-600 text-red-400/80 hover:bg-red-400/[0.06] hover:text-red-400 cursor-pointer border-none transition-colors"
+                >
+                  Delete Chat
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Config Tab ──────────────────────────────────────────────────
+
+function ConfigTab({ agent }: { agent: Agent }) {
+  const isOpenClaw = agent.provider === 'openclaw'
+  const schedules = useAppStore((s) => s.schedules)
+  const agentSchedules = Object.values(schedules).filter((s) => s.agentId === agent.id)
+  const [sandboxOpen, setSandboxOpen] = useState(false)
+  const [openclawOpen, setOpenclawOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   return (
     <div className="p-4 flex flex-col gap-4">
-      <div className={panelCardClass('p-4 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))]')}>
-        <SectionLabel>Overview</SectionLabel>
-        <p className="text-[14px] text-text-2 leading-relaxed">
-          {agent.description || 'No description yet. Use the agent editor to define what this agent is for.'}
-        </p>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          {summaryStats.map((item) => (
-            <div key={item.label} className="rounded-[12px] border border-white/[0.06] bg-black/[0.14] px-3 py-2.5">
-              <div className="text-[10px] font-700 uppercase tracking-[0.14em] text-text-3/45">{item.label}</div>
-              <div className="mt-1 text-[12px] text-text-2 font-medium break-words">{item.value}</div>
-            </div>
-          ))}
-        </div>
+      {/* Skills section */}
+      <div className={panelCardClass('p-4')}>
+        <SectionLabel>Skills</SectionLabel>
+        {isOpenClaw ? (
+          <OpenClawSkillsPanel
+            agentId={agent.id}
+            initialMode={agent.openclawSkillMode}
+            initialAllowed={agent.openclawAllowedSkills}
+          />
+        ) : (
+          <p className="text-[12px] text-text-3/50">Skills are configured in the agent editor.</p>
+        )}
       </div>
-      {agent.systemPrompt && (
-        <div className={panelCardClass('p-4')}>
-          <SectionLabel>System Prompt</SectionLabel>
-          <p className="text-[12px] text-text-3 bg-black/[0.14] rounded-[12px] p-3 border border-white/[0.04] max-h-[220px] overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
-            {agent.systemPrompt}
-          </p>
-        </div>
-      )}
-      {agent.capabilities && agent.capabilities.length > 0 && (
-        <div className={panelCardClass('p-4')}>
-          <SectionLabel>Capabilities</SectionLabel>
-          <div className="flex flex-wrap gap-1.5">
-            {agent.capabilities.map((cap) => (
-              <span key={cap} className="px-2.5 py-1 rounded-[8px] text-[11px] font-700 bg-accent-soft/70 text-accent-bright border border-accent-bright/10">
-                {cap}
-              </span>
-            ))}
+
+      {/* Automations section */}
+      <AutomationsSection schedules={agentSchedules} agent={agent} />
+
+      {/* Sandbox (collapsible) */}
+      <CollapsibleSection title="Sandbox" open={sandboxOpen} onToggle={() => setSandboxOpen((v) => !v)}>
+        <SandboxConfigSection agent={agent} />
+      </CollapsibleSection>
+
+      {/* OpenClaw settings (collapsible, OpenClaw only) */}
+      {isOpenClaw && (
+        <CollapsibleSection title="OpenClaw Settings" open={openclawOpen} onToggle={() => setOpenclawOpen((v) => !v)}>
+          <div className="flex flex-col gap-4">
+            <PermissionPresetSelector agentId={agent.id} />
+            <div className="border-t border-white/[0.06] pt-4">
+              <ExecConfigPanel agentId={agent.id} />
+            </div>
+            <div className="border-t border-white/[0.06] pt-4">
+              <SandboxEnvPanel />
+            </div>
           </div>
-        </div>
-      )}
-      {getEnabledToolIds(agent).length > 0 && (
-        <div className={panelCardClass('p-4')}>
-          <SectionLabel>Tools</SectionLabel>
-          <div className="flex flex-wrap gap-1.5">
-            {getEnabledToolIds(agent).map((tool) => (
-              <span key={tool} className="px-2.5 py-1 rounded-[8px] text-[11px] font-700 bg-sky-400/[0.08] text-sky-300 border border-sky-400/[0.08]">
-                {tool}
-              </span>
-            ))}
-          </div>
-        </div>
+        </CollapsibleSection>
       )}
 
-      {/* Actions */}
-      {(onEditAgent || onClearHistory || onDeleteAgent || onDeleteChat) && (
-        <div className={panelCardClass('p-4')}>
-          <SectionLabel>Actions</SectionLabel>
-          <div className="flex flex-col gap-2">
-            {onEditAgent && (
-              <button
-                onClick={onEditAgent}
-                className="w-full px-3 py-2.5 rounded-[10px] text-[12px] font-700 text-accent-bright bg-accent-soft/50 border border-accent-bright/10 cursor-pointer transition-all hover:bg-accent-soft text-left"
-                style={{ fontFamily: 'inherit' }}
-              >
-                Edit Agent
-              </button>
-            )}
-            <button
-              onClick={() => void handleToggleAvailability()}
-              disabled={availabilitySaving}
-              className={`w-full px-3 py-2.5 rounded-[10px] text-[12px] font-700 border cursor-pointer transition-all text-left disabled:opacity-50 ${
-                agent.disabled === true
-                  ? 'text-emerald-300 bg-emerald-400/[0.06] border-emerald-400/[0.12] hover:bg-emerald-400/[0.1]'
-                  : 'text-amber-300 bg-amber-400/[0.06] border-amber-400/[0.12] hover:bg-amber-400/[0.1]'
-              }`}
-              style={{ fontFamily: 'inherit' }}
-            >
-              {availabilitySaving
-                ? (agent.disabled === true ? 'Enabling Agent...' : 'Disabling Agent...')
-                : (agent.disabled === true ? 'Enable Agent' : 'Disable Agent')}
-            </button>
-            {(onClearHistory || onDeleteAgent || onDeleteChat) && (
-              <>
-                <SectionLabel>Danger Zone</SectionLabel>
-                <div className="flex flex-col gap-1.5">
-                  {onClearHistory && (
-                    <button
-                      onClick={onClearHistory}
-                      className="w-full px-3 py-2.5 rounded-[10px] text-[12px] font-700 text-red-400/80 bg-red-400/[0.04] border border-red-400/[0.08] cursor-pointer transition-all hover:bg-red-400/[0.08] hover:text-red-400 text-left"
-                      style={{ fontFamily: 'inherit' }}
-                    >
-                      Clear History
-                    </button>
-                  )}
-                  {onDeleteAgent && !isMainChat && (
-                    <button
-                      onClick={onDeleteAgent}
-                      className="w-full px-3 py-2.5 rounded-[10px] text-[12px] font-700 text-red-400/80 bg-red-400/[0.04] border border-red-400/[0.08] cursor-pointer transition-all hover:bg-red-400/[0.08] hover:text-red-400 text-left"
-                      style={{ fontFamily: 'inherit' }}
-                    >
-                      Delete Agent
-                    </button>
-                  )}
-                  {onDeleteChat && !isMainChat && (
-                    <button
-                      onClick={onDeleteChat}
-                      className="w-full px-3 py-2.5 rounded-[10px] text-[12px] font-700 text-red-400/80 bg-red-400/[0.04] border border-red-400/[0.08] cursor-pointer transition-all hover:bg-red-400/[0.08] hover:text-red-400 text-left"
-                      style={{ fontFamily: 'inherit' }}
-                    >
-                      Delete Chat
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
+      {/* Details (collapsible) */}
+      <CollapsibleSection title="Details" open={detailsOpen} onToggle={() => setDetailsOpen((v) => !v)}>
+        <div className="flex flex-col gap-3">
+          {agent.thinkingLevel && (
+            <div>
+              <label className="text-[10px] text-text-3/50 block mb-1">Thinking Level</label>
+              <p className="text-[12px] text-text-2 capitalize">{agent.thinkingLevel}</p>
+            </div>
+          )}
+          <div>
+            <label className="text-[10px] text-text-3/50 block mb-1">Agent ID</label>
+            <p className="text-[12px] text-text-3 font-mono select-all break-all">{agent.id}</p>
           </div>
+          <div>
+            <label className="text-[10px] text-text-3/50 block mb-1">Created</label>
+            <p className="text-[12px] text-text-3">{new Date(agent.createdAt).toLocaleString()}</p>
+          </div>
+          <div>
+            <label className="text-[10px] text-text-3/50 block mb-1">Updated</label>
+            <p className="text-[12px] text-text-3">{new Date(agent.updatedAt).toLocaleString()}</p>
+          </div>
+        </div>
+      </CollapsibleSection>
+    </div>
+  )
+}
+
+// ─── Collapsible Section ─────────────────────────────────────────
+
+function CollapsibleSection({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <div className={panelCardClass('')}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center justify-between w-full px-4 py-3 bg-transparent border-none cursor-pointer text-left"
+      >
+        <span className="text-[11px] font-700 uppercase tracking-[0.16em] text-text-3/45">{title}</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`text-text-3/40 transition-transform ${open ? 'rotate-180' : ''}`}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-white/[0.04]">
+          {children}
         </div>
       )}
     </div>
   )
 }
 
-function AutomationsTab({ schedules, agent }: { schedules: Array<{ id: string; name: string; status: string; cron?: string; scheduleType: string }>; agent: Agent }) {
+// ─── Automations Section ─────────────────────────────────────────
+
+function AutomationsSection({ schedules, agent }: { schedules: Array<{ id: string; name: string; status: string; cron?: string; scheduleType: string }>; agent: Agent }) {
   const isOpenClaw = agent.provider === 'openclaw'
   const [gatewayCrons, setGatewayCrons] = useState<Array<{ id: string; name: string; enabled: boolean; schedule?: { kind: string; value: string }; state?: { nextRun?: string; lastRun?: string } }>>([])
   const [cronLoading, setCronLoading] = useState(false)
@@ -354,7 +1234,6 @@ function AutomationsTab({ schedules, agent }: { schedules: Array<{ id: string; n
     if (!isOpenClaw) return
     setCronLoading(true)
     try {
-      const { api } = await import('@/lib/app/api-client')
       const crons = await api<Array<{ id: string; name: string; enabled: boolean; schedule?: { kind: string; value: string }; state?: { nextRun?: string; lastRun?: string } }>>('GET', '/openclaw/cron')
       setGatewayCrons(crons.filter((c) => (c as Record<string, unknown>).agentId === agent.id))
     } catch { /* ignore */ }
@@ -364,81 +1243,80 @@ function AutomationsTab({ schedules, agent }: { schedules: Array<{ id: string; n
   useEffect(() => { loadCrons() }, [loadCrons])
 
   const handleRunCron = async (id: string) => {
-    try {
-      const { api } = await import('@/lib/app/api-client')
-      await api('POST', '/openclaw/cron', { action: 'run', id })
-    } catch { /* ignore */ }
+    try { await api('POST', '/openclaw/cron', { action: 'run', id }) } catch { /* ignore */ }
   }
 
   const handleRemoveCron = async (id: string) => {
     try {
-      const { api } = await import('@/lib/app/api-client')
       await api('POST', '/openclaw/cron', { action: 'remove', id })
       setGatewayCrons((prev) => prev.filter((c) => c.id !== id))
     } catch { /* ignore */ }
   }
 
   return (
-    <div className="p-4 flex flex-col gap-3">
-      {/* Local schedules */}
-      {schedules.map((s) => (
-        <div key={s.id} className={panelCardClass('py-2.5 px-3.5')}>
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-600 text-text truncate flex-1">{s.name}</span>
-            <span className={`text-[10px] font-600 uppercase tracking-wider px-1.5 py-0.5 rounded-[4px]
-              ${s.status === 'active' ? 'text-emerald-400 bg-emerald-400/[0.08]' : 'text-text-3/50 bg-white/[0.02]'}`}>
-              {s.status}
-            </span>
-          </div>
-          <div className="text-[11px] text-text-3/50 mt-1">
-            {s.scheduleType}{s.cron ? ` (${s.cron})` : ''}
-          </div>
-        </div>
-      ))}
-
-      {/* Gateway cron jobs */}
-      {isOpenClaw && (
-        <>
-          {cronLoading && <div className="text-[12px] text-text-3/50">Loading gateway crons...</div>}
-          {gatewayCrons.map((c) => (
-            <div key={c.id} className={panelCardClass('py-2.5 px-3.5')}>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-600 text-text truncate flex-1">{c.name}</span>
-                <span className={`text-[10px] font-600 uppercase tracking-wider px-1.5 py-0.5 rounded-[4px]
-                  ${c.enabled ? 'text-emerald-400 bg-emerald-400/[0.08]' : 'text-text-3/50 bg-white/[0.02]'}`}>
-                  {c.enabled ? 'active' : 'disabled'}
-                </span>
-              </div>
-              <div className="text-[11px] text-text-3/50 mt-1">
-                {c.schedule?.kind} {c.schedule?.value}
-                {c.state?.nextRun && ` — next: ${c.state.nextRun}`}
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button onClick={() => handleRunCron(c.id)} className="text-[10px] text-accent-bright bg-transparent border-none cursor-pointer hover:underline">Run Now</button>
-                <button onClick={() => handleRemoveCron(c.id)} className="text-[10px] text-red-400/70 bg-transparent border-none cursor-pointer hover:underline">Delete</button>
-              </div>
+    <div className={panelCardClass('p-4')}>
+      <SectionLabel>Automations</SectionLabel>
+      <div className="flex flex-col gap-3">
+        {schedules.map((s) => (
+          <div key={s.id} className="rounded-[10px] border border-white/[0.04] bg-black/[0.08] py-2 px-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-600 text-text truncate flex-1">{s.name}</span>
+              <span className={`text-[10px] font-600 uppercase tracking-wider px-1.5 py-0.5 rounded-[4px]
+                ${s.status === 'active' ? 'text-emerald-400 bg-emerald-400/[0.08]' : 'text-text-3/50 bg-white/[0.02]'}`}>
+                {s.status}
+              </span>
             </div>
-          ))}
-          {showCronForm ? (
-            <CronJobForm agentId={agent.id} onSaved={() => { setShowCronForm(false); loadCrons() }} onCancel={() => setShowCronForm(false)} />
-          ) : (
-            <button
-              onClick={() => setShowCronForm(true)}
-              className="self-start px-3 py-1.5 rounded-[8px] border border-dashed border-white/[0.08] bg-transparent text-text-3 text-[12px] font-600 cursor-pointer transition-all hover:border-white/[0.15] hover:text-text-2"
-              style={{ fontFamily: 'inherit' }}
-            >
-              + Add Cron Job
-            </button>
-          )}
-        </>
-      )}
+            <div className="text-[11px] text-text-3/50 mt-1">
+              {s.scheduleType}{s.cron ? ` (${s.cron})` : ''}
+            </div>
+          </div>
+        ))}
 
-      {!schedules.length && !gatewayCrons.length && !cronLoading && !showCronForm && (
-        <div className={panelCardClass('p-4 text-[13px] text-text-3/50')}>No automations linked to this agent.</div>
-      )}
+        {isOpenClaw && (
+          <>
+            {cronLoading && <div className="text-[12px] text-text-3/50">Loading gateway crons...</div>}
+            {gatewayCrons.map((c) => (
+              <div key={c.id} className="rounded-[10px] border border-white/[0.04] bg-black/[0.08] py-2 px-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-600 text-text truncate flex-1">{c.name}</span>
+                  <span className={`text-[10px] font-600 uppercase tracking-wider px-1.5 py-0.5 rounded-[4px]
+                    ${c.enabled ? 'text-emerald-400 bg-emerald-400/[0.08]' : 'text-text-3/50 bg-white/[0.02]'}`}>
+                    {c.enabled ? 'active' : 'disabled'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-text-3/50 mt-1">
+                  {c.schedule?.kind} {c.schedule?.value}
+                  {c.state?.nextRun && ` — next: ${c.state.nextRun}`}
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => void handleRunCron(c.id)} className="text-[10px] text-accent-bright bg-transparent border-none cursor-pointer hover:underline">Run Now</button>
+                  <button onClick={() => void handleRemoveCron(c.id)} className="text-[10px] text-red-400/70 bg-transparent border-none cursor-pointer hover:underline">Delete</button>
+                </div>
+              </div>
+            ))}
+            {showCronForm ? (
+              <CronJobForm agentId={agent.id} onSaved={() => { setShowCronForm(false); void loadCrons() }} onCancel={() => setShowCronForm(false)} />
+            ) : (
+              <button
+                onClick={() => setShowCronForm(true)}
+                className="self-start px-3 py-1.5 rounded-[8px] border border-dashed border-white/[0.08] bg-transparent text-text-3 text-[12px] font-600 cursor-pointer transition-all hover:border-white/[0.15] hover:text-text-2"
+                style={{ fontFamily: 'inherit' }}
+              >
+                + Add Cron Job
+              </button>
+            )}
+          </>
+        )}
+
+        {!schedules.length && !gatewayCrons.length && !cronLoading && !showCronForm && (
+          <p className="text-[12px] text-text-3/50">No automations linked to this agent.</p>
+        )}
+      </div>
     </div>
   )
 }
+
+// ─── Sandbox Config Section ──────────────────────────────────────
 
 function SandboxConfigSection({ agent }: { agent: Agent }) {
   const loadAgents = useAppStore((s) => s.loadAgents)
@@ -467,21 +1345,14 @@ function SandboxConfigSection({ agent }: { agent: Agent }) {
   }, [agent.id, config])
 
   return (
-    <div className={panelCardClass('p-4')}>
-      <SectionLabel>Agent Sandbox</SectionLabel>
+    <div className="pt-3">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-[12px] text-text-2">Prefer Docker sandboxes for shell, browser, and code execution</span>
-        <button
-          onClick={() => update({ enabled: !config.enabled })}
-          disabled={saving}
-          className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer border-none ${config.enabled ? 'bg-accent-bright/80' : 'bg-white/[0.08]'}`}
-        >
-          <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${config.enabled ? 'translate-x-4' : ''}`} />
-        </button>
+        <span className="text-[12px] text-text-2">Prefer Docker sandboxes</span>
+        <ToggleSwitch on={config.enabled} onChange={() => void update({ enabled: !config.enabled })} disabled={saving} />
       </div>
       {dockerAvailable === false && (
         <div className="text-[11px] text-amber-400/80 bg-amber-400/[0.06] rounded-[8px] px-2.5 py-2 mb-3 border border-amber-400/10">
-          Docker is not detected. SwarmClaw will fall back to host execution until Docker Desktop is installed.
+          Docker is not detected. SwarmClaw will fall back to host execution.
         </div>
       )}
       {dockerAvailable === true && (
@@ -496,7 +1367,7 @@ function SandboxConfigSection({ agent }: { agent: Agent }) {
             <input
               type="text"
               defaultValue={config.image || 'node:22-slim'}
-              onBlur={(e) => update({ image: e.target.value.trim() || 'node:22-slim' })}
+              onBlur={(e) => void update({ image: e.target.value.trim() || 'node:22-slim' })}
               className="w-full rounded-[8px] border border-white/[0.06] bg-black/[0.14] px-2.5 py-1.5 text-[12px] text-text font-mono outline-none focus:border-accent-bright/30"
             />
           </div>
@@ -504,7 +1375,7 @@ function SandboxConfigSection({ agent }: { agent: Agent }) {
             <label className="text-[10px] text-text-3/50 block mb-1">Network</label>
             <select
               defaultValue={config.network || 'none'}
-              onChange={(e) => update({ network: e.target.value as 'none' | 'bridge' })}
+              onChange={(e) => void update({ network: e.target.value as 'none' | 'bridge' })}
               className="w-full rounded-[8px] border border-white/[0.06] bg-black/[0.14] px-2.5 py-1.5 text-[12px] text-text outline-none cursor-pointer focus:border-accent-bright/30"
             >
               <option value="none">none (isolated)</option>
@@ -519,7 +1390,7 @@ function SandboxConfigSection({ agent }: { agent: Agent }) {
                 defaultValue={config.memoryMb || 512}
                 min={64}
                 max={8192}
-                onBlur={(e) => update({ memoryMb: Math.max(64, Math.min(8192, Number(e.target.value) || 512)) })}
+                onBlur={(e) => void update({ memoryMb: Math.max(64, Math.min(8192, Number(e.target.value) || 512)) })}
                 className="w-full rounded-[8px] border border-white/[0.06] bg-black/[0.14] px-2.5 py-1.5 text-[12px] text-text font-mono outline-none focus:border-accent-bright/30"
               />
             </div>
@@ -531,75 +1402,17 @@ function SandboxConfigSection({ agent }: { agent: Agent }) {
                 min={0.25}
                 max={8}
                 step={0.25}
-                onBlur={(e) => update({ cpus: Math.max(0.25, Math.min(8, Number(e.target.value) || 1)) })}
+                onBlur={(e) => void update({ cpus: Math.max(0.25, Math.min(8, Number(e.target.value) || 1)) })}
                 className="w-full rounded-[8px] border border-white/[0.06] bg-black/[0.14] px-2.5 py-1.5 text-[12px] text-text font-mono outline-none focus:border-accent-bright/30"
               />
             </div>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-text-3/60">Read-only root filesystem</span>
-            <button
-              onClick={() => update({ readonlyRoot: !config.readonlyRoot })}
-              disabled={saving}
-              className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer border-none ${config.readonlyRoot ? 'bg-accent-bright/80' : 'bg-white/[0.08]'}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${config.readonlyRoot ? 'translate-x-4' : ''}`} />
-            </button>
+            <ToggleSwitch on={config.readonlyRoot ?? false} onChange={() => void update({ readonlyRoot: !config.readonlyRoot })} disabled={saving} />
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function AdvancedTab({ agent }: { agent: Agent }) {
-  const isOpenClaw = agent.provider === 'openclaw'
-
-  return (
-    <div className="p-4 flex flex-col gap-4">
-      {/* Container sandbox (available for all agents) */}
-      <SandboxConfigSection agent={agent} />
-
-      {/* Permission Presets + Exec Config + Sandbox Env (OpenClaw only) */}
-      {isOpenClaw && (
-        <>
-          <PermissionPresetSelector agentId={agent.id} />
-          <div className="border-t border-white/[0.06] pt-4">
-            <ExecConfigPanel agentId={agent.id} />
-          </div>
-          <div className="border-t border-white/[0.06] pt-4">
-            <SandboxEnvPanel />
-          </div>
-        </>
-      )}
-
-      {agent.heartbeatEnabled && (
-        <div className={panelCardClass('p-4')}>
-          <SectionLabel>Heartbeat</SectionLabel>
-          <p className="text-[13px] text-text-2">
-            Every {agent.heartbeatIntervalSec ?? DEFAULT_HEARTBEAT_INTERVAL_SEC}s
-            {agent.heartbeatModel && ` (${agent.heartbeatModel})`}
-          </p>
-        </div>
-      )}
-      {agent.thinkingLevel && (
-        <div className={panelCardClass('p-4')}>
-          <SectionLabel>Thinking Level</SectionLabel>
-          <p className="text-[13px] text-text-2 capitalize">{agent.thinkingLevel}</p>
-        </div>
-      )}
-      <div className={panelCardClass('p-4')}>
-        <SectionLabel>Agent ID</SectionLabel>
-        <p className="text-[12px] text-text-3 font-mono select-all">{agent.id}</p>
-      </div>
-      <div className={panelCardClass('p-4')}>
-        <SectionLabel>Created</SectionLabel>
-        <p className="text-[12px] text-text-3">{new Date(agent.createdAt).toLocaleString()}</p>
-      </div>
-      <div className={panelCardClass('p-4')}>
-        <SectionLabel>Updated</SectionLabel>
-        <p className="text-[12px] text-text-3">{new Date(agent.updatedAt).toLocaleString()}</p>
-      </div>
     </div>
   )
 }

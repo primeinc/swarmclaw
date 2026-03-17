@@ -45,6 +45,8 @@ import { dedup } from '@/lib/shared-utils'
 import { isDirectConnectorSession } from '../connectors/session-kind'
 import { buildManageSkillsDescription, executeManageSkillsAction } from './skills'
 import { isMainSession } from '@/lib/server/agents/main-agent-loop'
+import { findCredentialTemplate, buildCredentialRequestMessage } from '@/lib/credential-registry'
+import { createWatchJob } from '@/lib/server/runtime/watch-jobs'
 
 function validateAgentSoulPayload(value: unknown): string | null {
   if (value === undefined) return null
@@ -388,6 +390,10 @@ export function buildCrudTools(bctx: ToolBuildContext): StructuredToolInterface[
       description += '\n\nUse `source`, `events`, `agentId`, and `secret` when creating webhooks. Inbound calls should POST to `/api/webhooks/{id}` with header `x-webhook-secret` when a secret is configured.'
     } else if (toolKey === 'manage_secrets') {
       description += '\n\nUse this only for credential bootstrapping and sensitive secret storage such as API keys, passwords, tokens, recovery codes, and webhook secrets. Do not use it for normal memory, user preferences, durable facts, or project notes. Create/update calls accept either `data` as JSON or direct top-level fields like `name`, `service`, `value`, `scope`, `agentIds`, and `projectId`.'
+      description += '\n\nCredential self-service workflow — when you need a credential:'
+      description += '\n1. CHECK: manage_secrets(action="check", service="<name>") — looks up existing credentials and returns the service template'
+      description += '\n2. REQUEST: manage_secrets(action="request", service="<name>", reason="<why>") — if not found, sends a structured request to the human with signup/key URLs and registers a durable wait'
+      description += '\n3. Never report a credential blocker without first using check and then request.'
       if (ctx?.projectId) {
         description += `\n\nCurrent project context: "${ctx.projectName || ctx.projectId}" (projectId "${ctx.projectId}"). Omit "projectId" to link the secret to this active project.`
       }
@@ -864,6 +870,125 @@ export function buildCrudTools(bctx: ToolBuildContext): StructuredToolInterface[
                 deletedIds,
               })
             }
+            // ── Credential self-service: check + request ──
+            if (action === 'check' && toolKey === 'manage_secrets') {
+              const service = typeof normalized.service === 'string' ? normalized.service.trim().toLowerCase() : ''
+              if (!service) return 'Error: "service" is required for check action.'
+              const template = findCredentialTemplate(service)
+              const all = res.load()
+              const match = Object.values(all).find(
+                (s: any) => canAccessSecret(s) && typeof s.service === 'string' && s.service.toLowerCase() === service,
+              ) as Record<string, unknown> | undefined
+              const result: Record<string, unknown> = {
+                found: !!match,
+                service,
+                template: template
+                  ? { serviceId: template.serviceId, name: template.name, category: template.category, keyUrl: template.keyUrl, signupUrl: template.signupUrl, canSelfProvision: template.canSelfProvision ?? false, fields: template.fields.map((f) => ({ key: f.key, label: f.label, required: f.required !== false })) }
+                  : null,
+              }
+              if (match) {
+                result.secretId = match.id
+                result.secretName = match.name
+                // Optionally validate the credential
+                if (normalized.validate === true && template?.validationEndpoint) {
+                  try {
+                    const value = match.encryptedValue ? decryptKey(match.encryptedValue as string) : ''
+                    if (value) {
+                      const headers: Record<string, string> = {}
+                      if (template.validationMethod === 'header_auth') {
+                        headers['Authorization'] = `Bearer ${value}`
+                      }
+                      const controller = new AbortController()
+                      const timeout = setTimeout(() => controller.abort(), 5000)
+                      try {
+                        const resp = await fetch(template.validationEndpoint, {
+                          method: 'GET',
+                          headers,
+                          signal: controller.signal,
+                          ...(template.validationMethod === 'basic_auth'
+                            ? { headers: { 'Authorization': `Basic ${Buffer.from(`${value}:`).toString('base64')}` } }
+                            : {}),
+                        })
+                        clearTimeout(timeout)
+                        result.valid = resp.ok
+                        result.validationStatus = resp.status
+                      } catch {
+                        clearTimeout(timeout)
+                        result.valid = false
+                        result.validationError = 'Request failed or timed out'
+                      }
+                    } else {
+                      result.valid = false
+                      result.validationError = 'Empty credential value'
+                    }
+                  } catch {
+                    result.valid = false
+                    result.validationError = 'Failed to decrypt credential'
+                  }
+                }
+              }
+              return JSON.stringify(result)
+            }
+            if (action === 'request' && toolKey === 'manage_secrets') {
+              const service = typeof normalized.service === 'string' ? normalized.service.trim().toLowerCase() : ''
+              if (!service) return 'Error: "service" is required for request action.'
+              const reason = typeof normalized.reason === 'string' ? normalized.reason.trim() : ''
+              const template = findCredentialTemplate(service)
+
+              // Check if credential already exists
+              const all = res.load()
+              const existing = Object.values(all).find(
+                (s: any) => canAccessSecret(s) && typeof s.service === 'string' && s.service.toLowerCase() === service,
+              ) as Record<string, unknown> | undefined
+              if (existing) {
+                return JSON.stringify({
+                  status: 'already_exists',
+                  secretId: existing.id,
+                  secretName: existing.name,
+                  service,
+                  message: `A credential for "${template?.name || service}" already exists. Use action="get" with id="${existing.id}" to retrieve it.`,
+                })
+              }
+
+              // Build the request message for the human
+              const requestMessage = template
+                ? buildCredentialRequestMessage(template, reason)
+                : [
+                    `**Credential needed: ${service}**`,
+                    reason ? `\nReason: ${reason}` : '',
+                    '\nPlease provide the required credentials for this service.',
+                  ].filter(Boolean).join('\n')
+
+              const sessionId = ctx?.sessionId
+              if (!sessionId) return 'Error: no active session to send credential request.'
+
+              // Register a durable wait so the agent pauses until the human provides the credential
+              const correlationId = `cred-request:${service}:${genId().slice(0, 8)}`
+              const job = await createWatchJob({
+                type: 'mailbox',
+                sessionId,
+                agentId: ctx?.agentId || null,
+                createdByAgentId: ctx?.agentId || null,
+                description: `Waiting for ${template?.name || service} credential`,
+                resumeMessage: `The human replied with credential information for ${template?.name || service}. Read the reply, then store the provided value as a secret using manage_secrets(action="create", service="${service}", name="${template?.name || service} API Key", value="<the value from the reply>").`,
+                timeoutAt: Date.now() + 24 * 3600_000, // 24h timeout
+                target: { sessionId },
+                condition: {
+                  type: 'human_reply',
+                  correlationId,
+                },
+              })
+
+              return JSON.stringify({
+                status: 'credential_requested',
+                service,
+                template: template ? { name: template.name, keyUrl: template.keyUrl, signupUrl: template.signupUrl } : null,
+                correlationId,
+                watchJobId: job.id,
+                requestMessage,
+                message: `Credential request posted. Stop active tool use now and wait for the human to provide the ${template?.name || service} credential. The request includes instructions on where to obtain the key.`,
+              })
+            }
             if (action === 'claim_task' && toolKey === 'manage_tasks') {
               if (!id) return 'Error: "id" is required for claim_task action.'
               const { claimPoolTask } = await import('@/lib/server/runtime/queue')
@@ -905,7 +1030,7 @@ export function buildCrudTools(bctx: ToolBuildContext): StructuredToolInterface[
                 data: z.string().optional().describe('JSON string of fields for create/update'),
               }).passthrough()
             : z.object({
-                action: z.enum(['list', 'get', 'create', 'update', 'delete', 'claim_task']).describe('The CRUD action to perform'),
+                action: z.enum(['list', 'get', 'create', 'update', 'delete', 'claim_task', 'check', 'request']).describe('The CRUD action to perform'),
                 id: z.string().optional().describe('Resource ID (required for get, update, delete)'),
                 data: z.string().optional().describe('JSON string of fields for create/update'),
               }).passthrough(),

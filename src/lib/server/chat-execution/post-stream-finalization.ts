@@ -21,6 +21,26 @@ import {
 } from '@/lib/server/chat-execution/stream-continuation'
 import { buildForcedExternalServiceSummary } from '@/lib/server/chat-execution/prompt-builder'
 
+// ---------------------------------------------------------------------------
+// Classification JSON leak detection — strips `{ "isDeliverableTask": ... }`
+// objects that some models echo verbatim into their response text.
+// ---------------------------------------------------------------------------
+
+const CLASSIFICATION_LEAK_RE = /^\s*\{\s*"isDeliverableTask"\s*:/
+
+function stripLeakedClassificationJson(text: string): { cleaned: string; stripped: boolean } {
+  if (!CLASSIFICATION_LEAK_RE.test(text)) return { cleaned: text, stripped: false }
+  let depth = 0
+  let end = -1
+  for (let i = text.indexOf('{'); i < text.length; i++) {
+    if (text[i] === '{') depth++
+    else if (text[i] === '}') { depth--; if (depth === 0) { end = i + 1; break } }
+  }
+  if (end === -1) return { cleaned: text, stripped: false }
+  console.warn('[post-stream-finalization] Stripped leaked classification JSON from model output')
+  return { cleaned: text.slice(end).trimStart(), stripped: true }
+}
+
 // StreamAgentChatResult is defined inline to avoid circular dependency with stream-agent-chat.ts
 export interface PostStreamResult {
   fullText: string
@@ -114,6 +134,14 @@ export async function finalizeStreamResult(opts: FinalizeStreamResultOpts): Prom
     await emitLlmOutputHook(finalResponse)
     await cleanup()
     return { fullText: state.fullText, finalResponse, toolEvents: state.streamedToolEvents }
+  }
+
+  // Strip leaked classification JSON from model output (e.g. `{ "isDeliverableTask": true, ... }`)
+  const leakResult = stripLeakedClassificationJson(state.fullText)
+  if (leakResult.stripped) {
+    state.fullText = leakResult.cleaned
+    // Emit a reset so the frontend re-renders with the cleaned text
+    write(`data: ${JSON.stringify({ t: 'reset', text: leakResult.cleaned })}\n\n`)
   }
 
   // Extract LLM-generated suggestions from the response and strip the tag

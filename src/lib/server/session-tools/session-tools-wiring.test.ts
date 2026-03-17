@@ -228,6 +228,32 @@ describe('context utility functions', () => {
     assert.equal(result, '/home/user/project/src/index')
   })
 
+  it('safePath treats hallucinated absolute paths as workspace-relative', async () => {
+    const { safePath } = await import('./context')
+    const result = safePath('/home/user/project', '/complianceflow/src/file.ts')
+    assert.equal(result, '/home/user/project/complianceflow/src/file.ts')
+  })
+
+  it('safePath still blocks traversal through hallucinated absolute paths', async () => {
+    const { safePath } = await import('./context')
+    assert.throws(
+      () => safePath('/home/user/project', '/../../../etc/passwd'),
+      /Path traversal not allowed/,
+    )
+  })
+
+  it('safePath still allows /tmp/ paths', async () => {
+    const { safePath } = await import('./context')
+    const result = safePath('/home/user/project', '/tmp/file.txt')
+    assert.equal(result, '/tmp/file.txt')
+  })
+
+  it('safePath leaves relative paths unchanged', async () => {
+    const { safePath } = await import('./context')
+    const result = safePath('/home/user/project', 'src/app/globals.css')
+    assert.equal(result, '/home/user/project/src/app/globals.css')
+  })
+
   it('truncate respects max length', async () => {
     const { truncate } = await import('./context')
     const short = truncate('hello', 100)

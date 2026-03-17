@@ -43,7 +43,7 @@ export function OrgChartSidebar({ agents, allAgents, teams, onDragStart, onTeamD
   const [newTeamColor, setNewTeamColor] = useState(TEAM_COLORS[0])
   const [newTeamConfirmed, setNewTeamConfirmed] = useState(false)
   const [addAgentSearch, setAddAgentSearch] = useState('')
-  const [width, setWidth] = useState(208)
+  const [width, setWidth] = useState(280)
   const resizing = useRef(false)
 
   const onResizePointerDown = useCallback((e: React.PointerEvent) => {
@@ -71,7 +71,8 @@ export function OrgChartSidebar({ agents, allAgents, teams, onDragStart, onTeamD
     target.addEventListener('pointercancel', onUp)
   }, [width])
 
-  const hasContent = agents.length > 0 || teams.length > 0
+  const allAgentCount = Object.values(allAgents).filter(a => !a.trashedAt).length
+  const hasContent = agents.length > 0 || teams.length > 0 || allAgentCount > 0
   if (!hasContent) return null
 
   const filtered = agents.filter((a) => {

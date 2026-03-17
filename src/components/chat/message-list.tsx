@@ -2,6 +2,7 @@
 
 import { DEFAULT_HEARTBEAT_SHOW_ALERTS, DEFAULT_HEARTBEAT_SHOW_OK } from '@/lib/runtime/heartbeat-defaults'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { Message } from '@/types'
 import { useChatStore } from '@/stores/use-chat-store'
 import { useAppStore } from '@/stores/use-app-store'
@@ -67,7 +68,7 @@ function getLatestAssistantToolMoment(messages: Message[]): { key: string; name:
 type ChatState = ReturnType<typeof useChatStore.getState>
 
 const selectHasLiveArtifacts = (s: ChatState) =>
-  s.displayText.trim().length > 0 || s.toolEvents.length > 0 || s.thinkingText.trim().length > 0
+  s.displayText.length > 0 || s.toolEvents.length > 0 || s.thinkingText.length > 0
 
 interface LiveStreamBubbleProps {
   message: Message
@@ -75,6 +76,7 @@ interface LiveStreamBubbleProps {
   agentAvatarSeed?: string
   agentAvatarUrl?: string | null
   agentName?: string
+  cwd?: string
   isLast?: boolean
   onRetry?: () => void
   messageIndex?: number
@@ -84,20 +86,16 @@ interface LiveStreamBubbleProps {
 }
 
 const LiveStreamBubble = memo(function LiveStreamBubble(props: LiveStreamBubbleProps) {
-  const displayText = useChatStore((s) => s.displayText)
-  const thinkingText = useChatStore((s) => s.thinkingText)
-  const streamPhase = useChatStore((s) => s.streamPhase)
-  const streamToolName = useChatStore((s) => s.streamToolName)
-  const liveToolEvents = useChatStore((s) => s.toolEvents)
-
-  const liveStream = useMemo(() => ({
-    active: true as const,
-    phase: streamPhase,
-    toolName: streamToolName,
-    text: displayText,
-    thinking: thinkingText,
-    toolEvents: liveToolEvents,
-  }), [displayText, thinkingText, streamPhase, streamToolName, liveToolEvents])
+  const liveStream = useChatStore(
+    useShallow((s) => ({
+      active: true as const,
+      phase: s.streamPhase,
+      toolName: s.streamToolName,
+      text: s.displayText,
+      thinking: s.thinkingText,
+      toolEvents: s.toolEvents,
+    })),
+  )
 
   return <MessageBubble {...props} liveStream={liveStream} />
 })
@@ -456,6 +454,7 @@ export function MessageList({ messages, streaming, connectorFilter = null, loadi
               agentAvatarSeed={agent?.avatarSeed}
               agentAvatarUrl={agent?.avatarUrl}
               agentName={agent?.name}
+              cwd={session?.cwd}
               isLast={isLastAssistant}
               onRetry={isLastAssistant ? retryLastMessage : undefined}
               messageIndex={originalIndex >= 0 ? originalIndex : undefined}
@@ -481,6 +480,7 @@ export function MessageList({ messages, streaming, connectorFilter = null, loadi
     retryLastMessage,
     searchMatchSet,
     searchQuery,
+    session?.cwd,
     sessionId,
     settledSnapshot,
     streaming,

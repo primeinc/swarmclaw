@@ -72,6 +72,7 @@ export function ChatArea() {
   const loadAgents = useAppStore((s) => s.loadAgents)
   const setEditingAgentId = useAppStore((s) => s.setEditingAgentId)
   const setAgentSheetOpen = useAppStore((s) => s.setAgentSheetOpen)
+  const setAgentPrefill = useAppStore((s) => s.setAgentPrefill)
   const inspectorOpen = useAppStore((s) => s.inspectorOpen)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const setSidebarOpen = useAppStore((s) => s.setSidebarOpen)
@@ -93,7 +94,8 @@ export function ChatArea() {
   const [confirmClear, setConfirmClear] = useState(false)
   const [confirmDeleteAgent, setConfirmDeleteAgent] = useState(false)
   const [browserActive, setBrowserActive] = useState(false)
-  const [heartbeatHistoryOpen, setHeartbeatHistoryOpen] = useState(false)
+  const heartbeatHistoryOpen = useAppStore((s) => s.heartbeatHistoryOpen)
+  const setHeartbeatHistoryOpen = useAppStore((s) => s.setHeartbeatHistoryOpen)
   const [messagesLoading, setMessagesLoading] = useState(true)
   const [connectorFilter, setConnectorFilter] = useState<string | null>(null)
   const [extensionChatActions, setExtensionChatActions] = useState<Array<{ id: string; label: string; action: string; value: string; tooltip?: string }>>([])
@@ -275,6 +277,24 @@ export function ChatArea() {
     if (!sessionId) return
     try {
       await loadQueuedMessages(sessionId)
+      // Bridge the gap between "queue item disappears" and "isServerActive propagates".
+      // If the server picked up a queued run, immediately show the thinking indicator
+      // so users don't see a blank gap waiting for loadSessions to propagate.
+      const refreshedSession = useAppStore.getState().sessions[sessionId]
+      const chatState = useChatStore.getState()
+      if (
+        refreshedSession?.currentRunId
+        && !chatState.streaming
+        && chatState.streamingSessionId !== sessionId
+      ) {
+        useChatStore.setState({
+          streaming: true,
+          streamingSessionId: sessionId,
+          streamPhase: 'thinking',
+          streamText: '',
+          thinkingStartTime: Date.now(),
+        })
+      }
     } catch (err) {
       console.error('Failed to refresh queue:', err)
     }
@@ -421,8 +441,6 @@ export function ChatArea() {
           voiceActive={voice.active}
           voiceSupported={voice.supported}
           onVoiceToggle={handleVoiceToggle}
-          heartbeatHistoryOpen={heartbeatHistoryOpen}
-          onToggleHeartbeatHistory={() => setHeartbeatHistoryOpen((v) => !v)}
           connectorSources={connectorSources}
           connectorFilter={connectorFilter}
           onConnectorFilterChange={setConnectorFilter}
@@ -623,7 +641,13 @@ export function ChatArea() {
     {isDesktop && inspectorOpen && currentAgent && (
       <InspectorPanel
         agent={currentAgent}
+        session={session}
         onEditAgent={() => { setEditingAgentId(session.agentId!); setAgentSheetOpen(true) }}
+        onDuplicateAgent={() => {
+          setAgentPrefill(currentAgent)
+          setEditingAgentId(null)
+          setAgentSheetOpen(true)
+        }}
         onClearHistory={() => setConfirmClear(true)}
         onDeleteAgent={() => setConfirmDeleteAgent(true)}
         onDeleteChat={() => setConfirmDelete(true)}

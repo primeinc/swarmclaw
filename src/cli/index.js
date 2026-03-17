@@ -170,10 +170,10 @@ const COMMAND_GROUPS = [
     ],
   },
   {
-    name: 'dashboard',
-    description: 'Dashboard summary data',
+    name: 'delegation-jobs',
+    description: 'Delegation job status',
     commands: [
-      cmd('get', 'GET', '/dashboard', 'Get dashboard summary'),
+      cmd('list', 'GET', '/delegation-jobs', 'List active and recent delegation jobs'),
     ],
   },
   {

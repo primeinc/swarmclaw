@@ -218,12 +218,13 @@ export function shouldReplaceRecentAssistantMessage(params: {
   nextKind: Message['kind']
   now: number
 }): boolean {
-  const { previous, nextToolEvents, nextKind, now } = params
+  const { previous, nextKind, now } = params
   if (!previous || previous.role !== 'assistant') return false
-  if (nextToolEvents.length === 0) return false
   if (previous.kind && nextKind && previous.kind !== nextKind) return false
   if (typeof previous.time === 'number' && now - previous.time > 45_000) return false
   const prevTools = Array.isArray(previous.toolEvents) ? previous.toolEvents.length : 0
+  // Replace when previous has no tool events — it's a fragment or incomplete
+  // continuation response that should be superseded by the latest iteration.
   return prevTools === 0
 }
 

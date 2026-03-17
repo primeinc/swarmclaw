@@ -336,6 +336,7 @@ export function RuntimeLoopSection({ appSettings, patchSettings, inputClass }: S
                 type="checkbox"
                 checked={appSettings.taskQualityGateRequireVerification ?? false}
                 onChange={(e) => patchSettings({ taskQualityGateRequireVerification: e.target.checked })}
+                className="h-4 w-4 rounded border-white/20 accent-accent"
               />
               Require verification evidence
             </label>
@@ -344,6 +345,7 @@ export function RuntimeLoopSection({ appSettings, patchSettings, inputClass }: S
                 type="checkbox"
                 checked={appSettings.taskQualityGateRequireArtifact ?? false}
                 onChange={(e) => patchSettings({ taskQualityGateRequireArtifact: e.target.checked })}
+                className="h-4 w-4 rounded border-white/20 accent-accent"
               />
               Require artifact evidence
             </label>
@@ -352,6 +354,7 @@ export function RuntimeLoopSection({ appSettings, patchSettings, inputClass }: S
                 type="checkbox"
                 checked={appSettings.taskQualityGateRequireReport ?? false}
                 onChange={(e) => patchSettings({ taskQualityGateRequireReport: e.target.checked })}
+                className="h-4 w-4 rounded border-white/20 accent-accent"
               />
               Require task report
             </label>

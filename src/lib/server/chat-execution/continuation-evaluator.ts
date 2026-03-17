@@ -41,6 +41,7 @@ export interface ContinuationContext {
   message: string
   sessionExtensions: string[]
   isConnectorSession: boolean
+  isCoordinatorAgent: boolean
   history: Message[]
   session: { cwd: string }
   write: (data: string) => void
@@ -55,6 +56,7 @@ export interface ContinuationContext {
 export interface ContinuationDecision {
   type: ContinuationType
   requiredToolReminderNames: string[]
+  frequencyLimitedToolName?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -99,24 +101,51 @@ function checkUnfinishedToolCallsPending(ctx: ContinuationContext): Continuation
 }
 
 function checkLoopDetection(ctx: ContinuationContext): ContinuationDecision | null {
-  if (!ctx.state.loopDetectionTriggered) return null
-  const skipToolSummaryForShortResponse = shouldSkipToolSummaryForShortResponse({
-    fullText: ctx.state.fullText,
-    toolEvents: ctx.state.streamedToolEvents,
-    isConnectorSession: ctx.isConnectorSession,
-  })
-  const loopTextIsTrivial = !ctx.state.fullText.trim() || (
-    !skipToolSummaryForShortResponse
-    && ctx.state.fullText.trim().length < 150
-    && ctx.state.streamedToolEvents.length >= 2
-  )
-  if (loopTextIsTrivial && ctx.state.streamedToolEvents.length > 0 && ctx.limits.canContinue('tool_summary')) {
-    // Override: let tool_summary handle it
+  const isToolFrequency = (ctx.state.loopDetectionTriggered?.detector === 'tool_frequency') || ctx.state.toolFrequencyBlocked
+  if (!ctx.state.loopDetectionTriggered && !isToolFrequency) return null
+
+  // Tool frequency is recoverable — the agent is doing diverse work with one tool.
+  // Allow continuation with a fresh budget if loop_recovery has remaining uses.
+  if (isToolFrequency && ctx.limits.canContinue('loop_recovery')) {
+    // Extract tool name from whichever path triggered the frequency block
+    const frequencyLimitedToolName = ctx.state.loopDetectionTriggered?.toolName
+      || (typeof ctx.state.toolFrequencyBlocked === 'string' ? ctx.state.toolFrequencyBlocked : undefined)
+    const count = ctx.limits.increment('loop_recovery')
+    const { max } = ctx.limits.getStatus('loop_recovery')
+    writeStatus(ctx, {
+      loopRecovery: count,
+      maxRecoveries: max,
+      detector: 'tool_frequency',
+      toolName: frequencyLimitedToolName,
+    })
     ctx.state.loopDetectionTriggered = null
-    return null
+    ctx.state.toolFrequencyBlocked = false
+    return { type: 'loop_recovery', requiredToolReminderNames: [], frequencyLimitedToolName }
   }
+
+  // Non-frequency detectors (or exhausted budget) — check for tool_summary override
+  if (ctx.state.loopDetectionTriggered) {
+    const skipToolSummaryForShortResponse = shouldSkipToolSummaryForShortResponse({
+      fullText: ctx.state.fullText,
+      toolEvents: ctx.state.streamedToolEvents,
+      isConnectorSession: ctx.isConnectorSession,
+    })
+    const loopTextIsTrivial = !ctx.state.fullText.trim() || (
+      !skipToolSummaryForShortResponse
+      && ctx.state.fullText.trim().length < 150
+      && ctx.state.streamedToolEvents.length >= 2
+    )
+    if (loopTextIsTrivial && ctx.state.streamedToolEvents.length > 0 && ctx.limits.canContinue('tool_summary')) {
+      // Override: let tool_summary handle it
+      ctx.state.loopDetectionTriggered = null
+      ctx.state.toolFrequencyBlocked = false
+      return null
+    }
+  }
+
   // Terminal — caller should break
-  ctx.write(`data: ${JSON.stringify({ t: 'err', text: ctx.state.loopDetectionTriggered.message })}\n\n`) // err, not status
+  const errMessage = ctx.state.loopDetectionTriggered?.message || 'Tool frequency limit exceeded.'
+  ctx.write(`data: ${JSON.stringify({ t: 'err', text: errMessage })}\n\n`) // err, not status
   return { type: false, requiredToolReminderNames: [] }
 }
 
@@ -304,6 +333,21 @@ function checkToolErrorFollowthrough(ctx: ContinuationContext): ContinuationDeci
   return { type: 'tool_error_followthrough', requiredToolReminderNames: [] }
 }
 
+function checkCoordinatorDelegation(ctx: ContinuationContext): ContinuationDecision | null {
+  if (!ctx.isCoordinatorAgent) return null
+  if (!ctx.limits.canContinue('coordinator_delegation_nudge')) return null
+  // Skip if already delegated
+  const delegationTools = ['spawn_subagent', 'manage_protocols']
+  if (delegationTools.some(t => ctx.state.usedToolNames.has(t))) return null
+  // Only nudge if coordinator made 3+ direct substantial tool calls
+  const directTools = ['files', 'edit_file', 'shell', 'web']
+  const directCallCount = directTools.filter(t => ctx.state.usedToolNames.has(t)).length
+  if (directCallCount < 3) return null
+  ctx.limits.increment('coordinator_delegation_nudge')
+  writeStatus(ctx, { coordinatorDelegationNudge: true })
+  return { type: 'coordinator_delegation_nudge', requiredToolReminderNames: [] }
+}
+
 function checkToolSummary(ctx: ContinuationContext): ContinuationDecision | null {
   if (!ctx.state.hasToolCalls) return null
   if (ctx.state.streamedToolEvents.length === 0) return null
@@ -364,6 +408,7 @@ export function evaluateContinuation(ctx: ContinuationContext): ContinuationDeci
   const checks = [
     checkUnfinishedToolCallsPending,
     checkLoopDetection,
+    checkCoordinatorDelegation,
     checkExecutionContinuation,
     checkRequiredTools,
     checkMemoryWriteFollowthrough,

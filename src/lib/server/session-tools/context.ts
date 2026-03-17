@@ -126,6 +126,17 @@ export function safePath(cwd: string, filePath: string, scope?: 'workspace' | 'm
   if (path.isAbsolute(normalized) && ALLOWED_ABSOLUTE_PREFIXES.some((p: string) => resolved.startsWith(p))) {
     return resolved
   }
+  // Fallback: treat hallucinated absolute paths as workspace-relative.
+  // Models sometimes generate "/projectname/src/..." instead of "src/..."
+  if (path.isAbsolute(normalized)) {
+    const asRelative = normalized.replace(/^\/+/, '')
+    if (asRelative) {
+      const resolvedRelative = path.resolve(resolvedRoot, asRelative)
+      if (resolvedRelative.startsWith(resolvedRoot + path.sep) || resolvedRelative === resolvedRoot) {
+        return resolvedRelative
+      }
+    }
+  }
   throw new Error('Path traversal not allowed')
 }
 

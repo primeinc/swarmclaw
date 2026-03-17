@@ -11,18 +11,19 @@ import type {
 } from '@/types'
 import { cleanText, now, uniqueIds } from '@/lib/server/protocols/protocol-types'
 import type { ProtocolRunDeps } from '@/lib/server/protocols/protocol-types'
-import { findRunStep, loadProtocolRunById } from '@/lib/server/protocols/protocol-normalization'
-import { isTerminalProtocolRunStatus } from '@/lib/server/protocols/protocol-templates'
 import {
   appendProtocolEvent,
   persistRun,
-  updateRun,
 } from '@/lib/server/protocols/protocol-agent-turn'
 import {
   beginStep,
   buildParallelBranchState,
   finishStep,
+  syncForEachParentFromChildRun,
 } from '@/lib/server/protocols/protocol-step-helpers'
+
+// Re-export so any external callers still find it here
+export { syncForEachParentFromChildRun }
 
 export async function resolveForEachItems(
   run: ProtocolRun,
@@ -190,74 +191,3 @@ export async function processForEachStep(run: ProtocolRun, step: ProtocolStepDef
   return updated
 }
 
-export function syncForEachParentFromChildRun(
-  child: ProtocolRun,
-  parent: ProtocolRun,
-  forEachState: ProtocolRunForEachStepState,
-  deps?: ProtocolRunDeps,
-): ProtocolRun | null {
-  const nextBranches = forEachState.branches.map((branch) => (
-    branch.runId === child.id ? buildParallelBranchState(child, branch) : branch
-  ))
-  const waitingOnBranchIds = nextBranches
-    .filter((b) => !isTerminalProtocolRunStatus(b.status))
-    .map((b) => b.branchId)
-  const joinReady = waitingOnBranchIds.length === 0 && nextBranches.length > 0
-  const nextState: ProtocolRunForEachStepState = {
-    ...forEachState,
-    branches: nextBranches,
-    waitingOnBranchIds,
-    joinReady,
-    joinCompletedAt: joinReady && !forEachState.joinCompletedAt ? now(deps) : forEachState.joinCompletedAt || null,
-  }
-
-  const updatedParent = updateRun(parent.id, (current) => ({
-    ...current,
-    forEachState: {
-      ...(current.forEachState || {}),
-      [child.parentStepId!]: nextState,
-    },
-    updatedAt: now(deps),
-  }))
-  if (!updatedParent) return null
-
-  if (isTerminalProtocolRunStatus(child.status)) {
-    appendProtocolEvent(updatedParent.id, {
-      type: child.status === 'completed' ? 'parallel_branch_completed' : 'parallel_branch_failed',
-      stepId: child.parentStepId,
-      summary: `For-each branch "${child.branchId || child.id}" ${child.status}.`,
-      data: { branchId: child.branchId, childRunId: child.id, status: child.status },
-    }, deps)
-  }
-
-  if (joinReady && !forEachState.joinReady) {
-    appendProtocolEvent(updatedParent.id, {
-      type: 'join_ready',
-      stepId: child.parentStepId,
-      summary: 'All for-each branches completed. Advancing parent.',
-      data: { childRunIds: nextState.branchRunIds },
-    }, deps)
-  }
-
-  if (joinReady && updatedParent.status === 'waiting') {
-    // Advance past the for_each step
-    const parentStep = findRunStep(updatedParent, child.parentStepId!)
-    if (parentStep) {
-      const nextStepId = parentStep.nextStepId || null
-      const nextIndex = nextStepId && Array.isArray(updatedParent.steps)
-        ? Math.max(0, updatedParent.steps.findIndex((s) => s.id === nextStepId))
-        : Array.isArray(updatedParent.steps) ? updatedParent.steps.length : updatedParent.currentPhaseIndex + 1
-      persistRun({
-        ...updatedParent,
-        status: 'running',
-        currentStepId: nextStepId,
-        currentPhaseIndex: nextIndex,
-        waitingReason: null,
-        updatedAt: now(deps),
-      })
-    }
-    const { requestProtocolRunExecution } = require('@/lib/server/protocols/protocol-run-lifecycle') as typeof import('@/lib/server/protocols/protocol-run-lifecycle')
-    requestProtocolRunExecution(updatedParent.id, deps)
-  }
-  return loadProtocolRunById(updatedParent.id)
-}

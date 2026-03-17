@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
+import { resolveWorkspacePath } from '@/lib/server/resolve-workspace-path'
 
 const MIME_MAP: Record<string, string> = {
   '.html': 'text/html',
@@ -41,17 +42,19 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Missing path parameter' }, { status: 400 })
   }
 
-  // Resolve and normalize the path
-  const resolved = path.resolve(filePath)
+  const cwd = url.searchParams.get('cwd')
+
+  // Resolve the path, trying workspace-relative fallbacks
+  const resolved = resolveWorkspacePath(filePath, cwd)
+
+  if (!resolved) {
+    return NextResponse.json({ error: 'File not found' }, { status: 404 })
+  }
 
   // Block access to sensitive paths
   const blocked = ['.env', 'credentials', '.ssh', '.gnupg', '.aws']
   if (blocked.some((b) => resolved.includes(b))) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 })
-  }
-
-  if (!fs.existsSync(resolved)) {
-    return NextResponse.json({ error: 'File not found' }, { status: 404 })
   }
 
   const stat = fs.statSync(resolved)

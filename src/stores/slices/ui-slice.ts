@@ -97,6 +97,8 @@ export interface UiSlice {
   setChatFilter: (filter: 'all' | 'active' | 'recent') => void
   walletPanelAgentId: string | null
   setWalletPanelAgentId: (id: string | null) => void
+  heartbeatHistoryOpen: boolean
+  setHeartbeatHistoryOpen: (open: boolean) => void
   agentPrefill: Partial<Agent> | null
   setAgentPrefill: (prefill: Partial<Agent> | null) => void
 }
@@ -195,6 +197,8 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set, get)
   setChatFilter: (filter) => set({ chatFilter: filter }),
   walletPanelAgentId: null,
   setWalletPanelAgentId: (id) => set({ walletPanelAgentId: id }),
+  heartbeatHistoryOpen: false,
+  setHeartbeatHistoryOpen: (open) => set({ heartbeatHistoryOpen: open }),
   agentPrefill: null,
   setAgentPrefill: (prefill) => set({ agentPrefill: prefill })
 })

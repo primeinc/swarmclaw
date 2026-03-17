@@ -55,9 +55,32 @@ export function stripManagedBackgroundSuffix(command: string): string {
 
 function isLikelyServerCommand(command: string): boolean {
   const cmd = command.trim()
-  return /\bnpm\s+run\s+(dev|start|serve)\b/.test(cmd) || 
+  return /\bnpm\s+run\s+(dev|start|serve)\b/.test(cmd) ||
          /\bnpx\s+(serve|next|vite|nuxt|astro)\b/.test(cmd) ||
          /\bpython3?\s+-m\s+http\.server\b/.test(cmd)
+}
+
+/**
+ * Block shell commands that would kill SwarmClaw's own process.
+ * Defense-in-depth against common accidental patterns, not a full sandbox.
+ */
+function isSwarmClawDestructiveCommand(command: string): boolean {
+  const swarmclawPort = process.env.PORT || '3456'
+  const swarmclawPid = String(process.pid)
+
+  // Commands targeting SwarmClaw's port
+  if (new RegExp(`\\bkill-port\\s+${swarmclawPort}\\b`).test(command)) return true
+  if (new RegExp(`\\blsof\\b.*-ti\\s*:\\s*${swarmclawPort}\\b.*\\bkill\\b`).test(command)) return true
+  if (new RegExp(`\\bfuser\\s+${swarmclawPort}/tcp\\b.*-k`).test(command)) return true
+
+  // Commands targeting SwarmClaw's PID
+  if (new RegExp(`\\bkill\\s+(-\\d+\\s+)?${swarmclawPid}\\b`).test(command)) return true
+
+  // Broad process-killing patterns
+  if (/\bkillall\s+(node|next)\b/.test(command)) return true
+  if (/\bpkill\s+(-f\s+)?(next|swarmclaw)\b/.test(command)) return true
+
+  return false
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -234,6 +257,7 @@ async function executeShellAction(
     fileAccessPolicy?: { allowedPaths?: string[]; blockedPaths?: string[] } | null
     sandboxConfig?: AgentSandboxConfig | null
     filesystemScope?: 'workspace' | 'machine'
+    commandTimeoutMs?: number
   },
 ) {
   const normalized = normalizeShellArgs(args)
@@ -255,6 +279,10 @@ async function executeShellAction(
         // Enforce file access policy on shell command targets
         const policyDenial = checkShellFileAccessPolicy(command, bctx.cwd, bctx.fileAccessPolicy)
         if (policyDenial) return policyDenial
+        // Block commands that would kill SwarmClaw itself
+        if (isSwarmClawDestructiveCommand(command)) {
+          return 'Error: This command would terminate the SwarmClaw server. Use a more targeted command that only affects your project processes.'
+        }
         const envMap = coerceEnvMap(env) || {}
         let sandbox: SandboxOptions | undefined
         let hostWorkdir = resolveShellWorkdir(bctx.cwd, workdir, bctx.filesystemScope)
@@ -296,7 +324,11 @@ async function executeShellAction(
           agentId: bctx.agentId || null,
           sessionId: bctx.sessionId || null,
           background: effectiveBackground,
-          timeoutMs: typeof timeoutSec === 'number' ? timeoutSec * 1000 : 30000,
+          timeoutMs: typeof timeoutSec === 'number'
+            ? timeoutSec * 1000
+            : effectiveBackground
+              ? undefined          // let process-manager use DEFAULT_TIMEOUT_MS (30 min)
+              : (bctx.commandTimeoutMs || 30000),
           sandbox,
         })
         if (result.status === 'completed') return truncate(result.output || '(no output)', MAX_OUTPUT)
@@ -384,6 +416,7 @@ export function buildShellTools(bctx: ToolBuildContext) {
         fileAccessPolicy: bctx.fileAccessPolicy,
         sandboxConfig: bctx.sandboxConfig,
         filesystemScope: bctx.filesystemScope,
+        commandTimeoutMs: bctx.commandTimeoutMs,
       }),
       {
         name: 'shell',

@@ -2,6 +2,7 @@ import { genId } from '@/lib/id'
 import { hmrSingleton } from '@/lib/shared-utils'
 import type { DelegationJobArtifact, DelegationJobCheckpoint, DelegationJobRecord, DelegationJobStatus } from '@/types'
 import { loadDelegationJobs, loadSession, patchDelegationJob, upsertDelegationJob } from '@/lib/server/storage'
+import { enqueueSystemEvent } from '@/lib/server/runtime/system-events'
 import { ensureDelegationMission, syncDelegationMissionFromJob } from '@/lib/server/missions/mission-service'
 import { notify } from '@/lib/server/ws-hub'
 
@@ -253,15 +254,22 @@ export function appendDelegationArtifacts(id: string, artifacts: DelegationJobAr
   })
 }
 
-export function recoverStaleDelegationJobs(maxAgeMs = 15 * 60_000): number {
+export function recoverStaleDelegationJobs(opts?: { maxAgeMs?: number; fullRestart?: boolean }): number {
+  const maxAgeMs = opts?.maxAgeMs ?? 15 * 60_000
   const threshold = Date.now() - maxAgeMs
   const stale = listDelegationJobs().filter((job) =>
     (job.status === 'queued' || job.status === 'running')
     && !runtimeHandles.has(job.id)
-    && (job.updatedAt || job.createdAt) < threshold,
+    && (opts?.fullRestart || (job.updatedAt || job.createdAt) < threshold),
   )
   for (const job of stale) {
-    failDelegationJob(job.id, 'Delegation job was interrupted before completion.')
+    failDelegationJob(job.id, 'Delegation job was interrupted by server restart.')
+    if (job.parentSessionId) {
+      enqueueSystemEvent(
+        job.parentSessionId,
+        `Delegation to agent was interrupted by server restart. Task: "${job.task?.slice(0, 100)}". Consider retrying.`,
+      )
+    }
   }
   return stale.length
 }

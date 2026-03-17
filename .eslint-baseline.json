@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-03-16T19:23:45.931Z",
-  "totalIssues": 449,
+  "generatedAt": "2026-03-17T01:10:18.981Z",
+  "totalIssues": 450,
   "uniqueIssues": 156,
   "issues": [
     {
@@ -751,7 +751,7 @@
       "ruleId": "@typescript-eslint/no-require-imports",
       "severity": 2,
       "message": "A `require()` style import is forbidden.",
-      "count": 2
+      "count": 1
     },
     {
       "filePath": "src/lib/server/protocols/protocol-run-lifecycle.ts",
@@ -926,7 +926,7 @@
       "ruleId": "@typescript-eslint/no-explicit-any",
       "severity": 2,
       "message": "Unexpected any. Specify a different type.",
-      "count": 13
+      "count": 15
     },
     {
       "filePath": "src/lib/server/session-tools/edit_file.ts",

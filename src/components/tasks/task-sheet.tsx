@@ -999,6 +999,7 @@ export function TaskSheet() {
                   type="checkbox"
                   checked={qualityGateRequireVerification}
                   onChange={(e) => setQualityGateRequireVerification(e.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 accent-accent"
                 />
                 Require verification evidence (tests/lint/build)
               </label>
@@ -1007,6 +1008,7 @@ export function TaskSheet() {
                   type="checkbox"
                   checked={qualityGateRequireArtifact}
                   onChange={(e) => setQualityGateRequireArtifact(e.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 accent-accent"
                 />
                 Require artifact evidence (upload URL or task artifacts)
               </label>
@@ -1015,6 +1017,7 @@ export function TaskSheet() {
                   type="checkbox"
                   checked={qualityGateRequireReport}
                   onChange={(e) => setQualityGateRequireReport(e.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 accent-accent"
                 />
                 Require generated task report
               </label>

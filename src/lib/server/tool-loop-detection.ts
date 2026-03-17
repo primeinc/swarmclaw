@@ -32,6 +32,8 @@ export interface LoopDetectionResult {
   severity: LoopSeverity
   detector: 'generic_repeat' | 'polling_stall' | 'ping_pong' | 'circuit_breaker' | 'tool_frequency'
   message: string
+  /** The tool name that triggered the detection (set by tool_frequency detector). */
+  toolName?: string
 }
 
 export interface LoopDetectionThresholds {
@@ -138,6 +140,11 @@ export class ToolLoopTracker {
       ?? null
   }
 
+  /** Reset call history (used after loop_recovery continuation to give the agent a fresh budget). */
+  reset(): void {
+    this.history = []
+  }
+
   /** Get the full call history (for diagnostics). */
   getHistory(): ReadonlyArray<ToolCallRecord> {
     return this.history
@@ -161,6 +168,7 @@ export class ToolLoopTracker {
       return {
         severity: 'critical',
         detector: 'tool_frequency',
+        toolName: current.name,
         message: `Tool "${current.name}" called ${count} times this turn. Excessive repetition — wrap up with available results.`,
       }
     }
@@ -168,6 +176,7 @@ export class ToolLoopTracker {
       return {
         severity: 'warning',
         detector: 'tool_frequency',
+        toolName: current.name,
         message: `Tool "${current.name}" called ${count} times. Consider whether more calls are needed.`,
       }
     }
@@ -183,6 +192,7 @@ export class ToolLoopTracker {
       return {
         severity: 'critical',
         detector: 'tool_frequency',
+        toolName: current.name,
         message: `Tool "${current.name}" would be called ${count} times this turn. Excessive repetition — wrap up with available results.`,
       }
     }
@@ -190,6 +200,7 @@ export class ToolLoopTracker {
       return {
         severity: 'warning',
         detector: 'tool_frequency',
+        toolName: current.name,
         message: `Tool "${current.name}" is nearing overuse (${count} calls this turn). Consider whether another call is needed.`,
       }
     }

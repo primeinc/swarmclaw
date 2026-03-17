@@ -7,6 +7,7 @@ import type { OrgTreeNode } from '@/lib/org-chart'
 import type { Agent } from '@/types'
 import { OrgChartNode } from './org-chart-node'
 import { OrgChartEdge } from './org-chart-edge'
+import { useDelegationEdgeState } from '@/hooks/use-delegation-edge-state'
 import { OrgChartTeamRegion } from './org-chart-team-region'
 import type { ResizeDirection } from './org-chart-team-region'
 import { OrgChartToolbar } from './org-chart-toolbar'
@@ -14,6 +15,7 @@ import { OrgChartSidebar } from './org-chart-sidebar'
 import { OrgChartContextMenu } from './org-chart-context-menu'
 import { OrgChartDetailPanel } from './org-chart-detail-panel'
 import { MiniChatBubble } from './mini-chat-bubble'
+import { OrgChartEdgePopover } from './org-chart-edge-popover'
 import type { ContextAction } from './org-chart-context-menu'
 import { useOrgChartPanZoom } from './use-org-chart-pan-zoom'
 import { useOrgChartDrag } from './use-org-chart-drag'
@@ -25,6 +27,8 @@ const NODE_H = 110
 
 export function OrgChartView() {
   const agents = useAppStore((s) => s.agents)
+  const sessions = useAppStore((s) => s.sessions)
+  const loadSessions = useAppStore((s) => s.loadSessions)
   const batchUpdateAgents = useAppStore((s) => s.batchUpdateAgents)
   const loadAgents = useAppStore((s) => s.loadAgents)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -35,6 +39,7 @@ export function OrgChartView() {
   const [linkingState, setLinkingState] = useState<{ agentId: string; direction: 'parent' | 'child' } | null>(null)
   const [selectedTeamLabel, setSelectedTeamLabel] = useState<string | null>(null)
   const [chatBubbleAgentId, setChatBubbleAgentId] = useState<string | null>(null)
+  const [edgePopover, setEdgePopover] = useState<{ parentId: string; childId: string; x: number; y: number } | null>(null)
   const [toolIndicator, setToolIndicator] = useState<{ agentId: string; text: string } | null>(null)
   const toolIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const teamDragRef = useRef<{ label: string; startX: number; startY: number; agentIds: string[] } | null>(null)
@@ -49,7 +54,16 @@ export function OrgChartView() {
   const sidebarTeamDragRef = useRef<{ team: { label: string; color: string | null; agentIds: string[] }; moved: boolean } | null>(null)
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadAgents() }, [])
+  useEffect(() => { loadAgents(); loadSessions() }, [])
+
+  // Running agents — derived from sessions
+  const runningAgentIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const s of Object.values(sessions)) {
+      if (s.agentId && s.active) ids.add(s.agentId)
+    }
+    return ids
+  }, [sessions])
 
   // Build tree
   const { roots, unattached } = useMemo(() => buildOrgTree(agents), [agents])
@@ -76,6 +90,22 @@ export function OrgChartView() {
     }
     return layoutTree(roots)
   }, [agents, roots])
+
+  // Live delegation edge state
+  const edgeLiveMap = useDelegationEdgeState(agents)
+
+  // Build per-node glow from edge live state (both parent and child light up)
+  const nodeGlowMap = useMemo(() => {
+    const map = new Map<string, 'indigo' | 'emerald' | 'red'>()
+    for (const [edgeKey, state] of edgeLiveMap) {
+      if (!state.active) continue
+      const [parentId, childId] = edgeKey.split('-')
+      // Both ends of an active edge glow
+      if (parentId && !map.has(parentId)) map.set(parentId, state.color)
+      if (childId && !map.has(childId)) map.set(childId, state.color)
+    }
+    return map
+  }, [edgeLiveMap])
 
   // Teams
   const teams = useMemo(() => deriveTeams(agents), [agents])
@@ -364,7 +394,7 @@ export function OrgChartView() {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden bg-[#0a0a14]"
+      className="relative w-full h-full overflow-hidden bg-[#0a0a14] select-none"
       style={{ touchAction: 'none' }}
       {...panHandlers}
       onPointerMove={(e) => {
@@ -575,13 +605,25 @@ export function OrgChartView() {
             const pp = positions.get(parentId)
             const cp = positions.get(childId)
             if (!pp || !cp) return null
+            const edgeKey = `${parentId}-${childId}`
+            const liveState = edgeLiveMap.get(edgeKey)
             return (
               <OrgChartEdge
-                key={`${parentId}-${childId}`}
+                key={edgeKey}
                 x1={pp.x + NODE_W / 2}
                 y1={pp.y + NODE_H}
                 x2={cp.x + NODE_W / 2}
                 y2={cp.y}
+                active={liveState?.active ?? false}
+                direction={liveState?.direction ?? null}
+                messagePreview={liveState?.snippet ?? null}
+                color={liveState?.color ?? 'indigo'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const midX = (pp.x + NODE_W / 2 + cp.x + NODE_W / 2) / 2
+                  const midY = (pp.y + NODE_H + cp.y) / 2
+                  setEdgePopover({ parentId, childId, x: midX, y: midY })
+                }}
               />
             )
           })}
@@ -609,11 +651,13 @@ export function OrgChartView() {
             >
               <OrgChartNode
                 agent={agent}
+                isRunning={runningAgentIds.has(id)}
                 isSelected={selectedId === id}
                 isDragging={isDragging}
                 isDropTarget={isDropTarget}
                 childCount={cc}
                 delegationInfo={delInfo}
+                delegationGlow={nodeGlowMap.get(id) ?? null}
                 isTeamHighlighted={!!selectedTeamLabel && agent.orgChart?.teamLabel === selectedTeamLabel}
                 isDimmed={!!linkingState && descendantIds.has(id)}
                 isLinkTarget={!!linkingState && id !== linkingState.agentId && !descendantIds.has(id)}
@@ -702,12 +746,25 @@ export function OrgChartView() {
                 transform: 'translateX(-50%)',
               }}
             >
-              <span className="text-[9px] font-500 px-2 py-0.5 rounded-full bg-accent-bright/15 text-accent-bright border border-accent-bright/20 whitespace-nowrap animate-pulse">
+              <span className="text-[9px] font-500 px-2 py-0.5 rounded-full bg-accent-bright/15 text-accent-bright border border-accent-bright/20 whitespace-nowrap animate-pulse overflow-hidden text-ellipsis" style={{ maxWidth: 200, display: 'inline-block' }}>
                 {toolIndicator.text}
               </span>
             </div>
           )
         })()}
+
+        {/* Edge delegation popover — shows messages between agents */}
+        {edgePopover && agents[edgePopover.parentId] && agents[edgePopover.childId] && (
+          <div className="absolute z-50" style={{ left: edgePopover.x, top: edgePopover.y }}>
+            <OrgChartEdgePopover
+              parentAgent={agents[edgePopover.parentId]}
+              childAgent={agents[edgePopover.childId]}
+              x={0}
+              y={0}
+              onClose={() => setEdgePopover(null)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Toolbar */}

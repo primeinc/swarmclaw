@@ -10,6 +10,7 @@ import {
   removeQueuedSessionMessage,
 } from '@/lib/chat/chats'
 import { mergeCompletedAssistantMessage, reconcileClientMessageMetadata } from '@/lib/chat/chat-streaming-state'
+import { stripAllInternalMetadata } from '@/lib/strip-internal-metadata'
 import {
   clearQueuedMessagesForSession,
   createOptimisticQueuedMessage,
@@ -53,7 +54,7 @@ interface ChatState {
   assistantRenderId: string | null
 
   // Task 1: Rich status indicator
-  streamPhase: 'thinking' | 'tool' | 'responding' | 'connecting'
+  streamPhase: 'queued' | 'thinking' | 'tool' | 'responding' | 'connecting'
   streamToolName: string
 
   // Task 2: Typing cadence simulation
@@ -162,6 +163,7 @@ function stripHiddenControlTokens(text: string): string {
   }
 
   cleaned = cleaned.replace(CONTROL_TOKEN_LINE_RE, '$1')
+  cleaned = stripAllInternalMetadata(cleaned)
   return cleaned.replace(/\n{3,}/g, '\n\n').trim()
 }
 
@@ -403,7 +405,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSessionId: sessionId,
       streamText: '',
       assistantRenderId,
-      streamPhase: 'thinking' as const,
+      streamPhase: 'queued' as const,
       streamToolName: '',
       displayText: '',
       agentStatus: null,
@@ -434,17 +436,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (event.t === 'd') {
         fullText += event.text || ''
         const visibleText = stripHiddenControlTokens(fullText)
-        set({ streamText: visibleText })
-
-        // Phase: first text data → 'responding'
-        if (get().streamPhase !== 'responding') {
-          set({ streamPhase: 'responding' })
-        }
 
         // Sound: stream start
         if (!soundFiredStart && get().soundEnabled) {
           soundFiredStart = true
           playStreamStart()
+        }
+
+        // Build a single patch for all state changes this event
+        const patch: Partial<ChatState> = { streamText: visibleText }
+
+        // Phase: first text data → 'responding'
+        if (get().streamPhase !== 'responding') {
+          patch.streamPhase = 'responding'
         }
 
         // Typing cadence: buffer first CADENCE_THRESHOLD chars, release word-by-word
@@ -470,20 +474,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } else {
           // Past threshold — sync displayText directly
           if (_cadenceInterval) clearCadence()
-          set({ displayText: visibleText })
+          patch.displayText = visibleText
         }
+
+        set(patch)
       } else if (event.t === 'md') {
         // Parse metadata events (usage/run/queue/thinking). Ignore unknown keys.
         try {
           const meta = JSON.parse(event.text || '{}')
+          const mdPatch: Partial<ChatState> = {}
           if (meta.usage) {
-            set({ lastUsage: meta.usage })
+            mdPatch.lastUsage = meta.usage
           }
           if (meta.suggestions) {
             suggestions = meta.suggestions
           }
           if (meta.thinking && typeof meta.thinking === 'string') {
-            set({ thinkingText: meta.thinking })
+            mdPatch.thinkingText = meta.thinking
+          }
+          if (meta.run?.status === 'queued') {
+            mdPatch.streamPhase = 'queued'
+          } else if (meta.run?.status === 'running') {
+            const current = get().streamPhase
+            if (current === 'queued' || current === 'connecting') {
+              mdPatch.streamPhase = 'thinking'
+            }
+          }
+          if (Object.keys(mdPatch).length > 0) {
+            set(mdPatch)
           }
         } catch {
           // Ignore non-JSON metadata payloads.
@@ -493,60 +511,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const visibleText = stripHiddenControlTokens(fullText)
         set({ streamText: visibleText, displayText: visibleText })
       } else if (event.t === 'tool_call') {
-        const id = `tc-${++toolCallCounter}`
-        set((s) => ({
-          ...(s.toolEvents[s.toolEvents.length - 1]?.name === (event.toolName || 'unknown')
-            && s.toolEvents[s.toolEvents.length - 1]?.input === (event.toolInput || '')
-            && s.toolEvents[s.toolEvents.length - 1]?.status === 'running'
-              ? {}
-              : {
-          streamPhase: 'tool' as const,
-          streamToolName: event.toolName || 'unknown',
-          toolEvents: [...s.toolEvents, {
-            id,
-            name: event.toolName || 'unknown',
-            input: event.toolInput || '',
-            status: 'running',
-          }],
-              }),
-        }))
+        // Dedup: skip if the last tool event matches name+input and is still running
+        const currentEvents = get().toolEvents
+        const lastEvent = currentEvents[currentEvents.length - 1]
+        if (
+          lastEvent
+          && lastEvent.name === (event.toolName || 'unknown')
+          && lastEvent.input === (event.toolInput || '')
+          && lastEvent.status === 'running'
+        ) {
+          // Duplicate — skip without triggering subscribers
+        } else {
+          const id = `tc-${++toolCallCounter}`
+          set({
+            streamPhase: 'tool' as const,
+            streamToolName: event.toolName || 'unknown',
+            toolEvents: [...currentEvents, {
+              id,
+              name: event.toolName || 'unknown',
+              input: event.toolInput || '',
+              status: 'running',
+            }],
+          })
+        }
       } else if (event.t === 'tool_result') {
         const soundOn = get().soundEnabled
-        set((s) => {
-          const events = [...s.toolEvents]
-          const idx = events.findLastIndex(
-            (e) => e.name === event.toolName && e.status === 'running',
-          )
-          if (idx === -1) {
-            const last = events[events.length - 1]
-            const output = event.toolOutput || ''
-            const isError = /^(Error:|error:|ECONNREFUSED|ETIMEDOUT|timeout|failed)/i.test(output.trim())
-              || output.includes('ECONNREFUSED')
-              || output.includes('ETIMEDOUT')
-              || output.includes('Error:')
-            if (
-              last
-              && last.name === event.toolName
-              && last.output === output
-              && last.status === (isError ? 'error' : 'done')
-            ) {
-              return { toolEvents: events }
-            }
+        const currentEvents = get().toolEvents
+        const idx = currentEvents.findLastIndex(
+          (e) => e.name === event.toolName && e.status === 'running',
+        )
+        if (idx === -1) {
+          // No running event found — check if last event already matches (dedup)
+          const last = currentEvents[currentEvents.length - 1]
+          const output = event.toolOutput || ''
+          const isError = /^(Error:|error:|ECONNREFUSED|ETIMEDOUT|timeout|failed)/i.test(output.trim())
+            || output.includes('ECONNREFUSED')
+            || output.includes('ETIMEDOUT')
+            || output.includes('Error:')
+          if (
+            last
+            && last.name === event.toolName
+            && last.output === output
+            && last.status === (isError ? 'error' : 'done')
+          ) {
+            // Already matches — skip without triggering subscribers
           }
-          if (idx !== -1) {
-            const output = event.toolOutput || ''
-            const isError = /^(Error:|error:|ECONNREFUSED|ETIMEDOUT|timeout|failed)/i.test(output.trim())
-              || output.includes('ECONNREFUSED')
-              || output.includes('ETIMEDOUT')
-              || output.includes('Error:')
-            events[idx] = { ...events[idx], status: isError ? 'error' : 'done', output }
-            if (soundOn) {
-              if (isError) playError()
-              else playToolComplete()
-            }
+        } else {
+          const events = [...currentEvents]
+          const output = event.toolOutput || ''
+          const isError = /^(Error:|error:|ECONNREFUSED|ETIMEDOUT|timeout|failed)/i.test(output.trim())
+            || output.includes('ECONNREFUSED')
+            || output.includes('ETIMEDOUT')
+            || output.includes('Error:')
+          events[idx] = { ...events[idx], status: isError ? 'error' : 'done', output }
+          if (soundOn) {
+            if (isError) playError()
+            else playToolComplete()
           }
-          return { toolEvents: events }
-        })
+          set({ toolEvents: events })
+        }
       } else if (event.t === 'reset') {
         // Server rolled back state after a transient error — clear accumulated
         // text and tool events so the retry starts with a clean slate.

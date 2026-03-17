@@ -4,6 +4,7 @@ import { notFound } from '@/lib/server/collection-helpers'
 import { normalizeProviderEndpoint } from '@/lib/openclaw/openclaw-endpoint'
 import { resolvePrimaryAgentRoute } from '@/lib/server/agents/agent-runtime-config'
 import { clearMainLoopStateForSession } from '@/lib/server/agents/main-agent-loop'
+import { cleanupSessionProcesses } from '@/lib/server/runtime/process-manager'
 import { getSessionQueueSnapshot, getSessionRunState } from '@/lib/server/runtime/session-run-manager'
 import { normalizeCapabilitySelection } from '@/lib/capability-selection'
 import { enrichSessionWithMissionSummary } from '@/lib/server/missions/mission-service'
@@ -152,6 +153,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     try { active.get(id)?.kill() } catch {}
     active.delete(id)
   }
+  cleanupSessionProcesses(id)
   deleteSession(id)
   return new NextResponse('OK')
 }

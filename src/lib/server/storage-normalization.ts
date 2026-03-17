@@ -1,6 +1,7 @@
 import { normalizeCapabilitySelection } from '@/lib/capability-selection'
 import { normalizeAgentSandboxConfig } from '@/lib/agent-sandbox-defaults'
 import { isDirectConnectorSession } from '@/lib/server/connectors/session-kind'
+import { WORKER_ONLY_PROVIDER_IDS } from '@/lib/provider-sets'
 
 type StoredObject = Record<string, unknown>
 
@@ -422,6 +423,12 @@ export function normalizeStoredRecord(
       if (agent.delegationTargetMode !== 'selected') {
         agent.delegationTargetMode = 'all'
       }
+    }
+    // Worker-only providers cannot be coordinators, delegate, or have heartbeats
+    if (WORKER_ONLY_PROVIDER_IDS.has(agent.provider as string)) {
+      agent.role = 'worker'
+      agent.delegationEnabled = false
+      agent.heartbeatEnabled = false
     }
     // Org chart normalization
     if (agent.orgChart && typeof agent.orgChart === 'object' && !Array.isArray(agent.orgChart)) {

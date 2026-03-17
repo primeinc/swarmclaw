@@ -50,6 +50,12 @@ const MAX_TOOL_SUMMARY = 2
 /** Max coordinator synthesis continuations */
 const MAX_COORDINATOR_SYNTHESIS = 2
 
+/** Max coordinator delegation nudge (once is enough — don't nag) */
+const MAX_COORDINATOR_DELEGATION_NUDGE = 1
+
+/** Max loop recovery continuations (tool_frequency limit resets) */
+const MAX_LOOP_RECOVERY = 2
+
 // ---------------------------------------------------------------------------
 
 export class ContinuationLimits {
@@ -83,6 +89,8 @@ export class ContinuationLimits {
       tool_error_followthrough: { count: 0, max: MAX_TOOL_ERROR_FOLLOWTHROUGH },
       tool_summary: { count: 0, max: maxToolSummaryRetries },
       coordinator_synthesis: { count: 0, max: MAX_COORDINATOR_SYNTHESIS },
+      coordinator_delegation_nudge: { count: 0, max: MAX_COORDINATOR_DELEGATION_NUDGE },
+      loop_recovery: { count: 0, max: MAX_LOOP_RECOVERY },
     }
   }
 

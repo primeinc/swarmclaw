@@ -191,7 +191,7 @@ export function startDaemon(options?: { source?: string; manualStart?: boolean }
   try {
     validateCompletedTasksQueue()
     cleanupFinishedTaskSessions()
-    recoverStaleDelegationJobs()
+    recoverStaleDelegationJobs({ fullRestart: true })
     ensureProtocolEngineRecovered()
     restoreProviderHealthState()
     try {

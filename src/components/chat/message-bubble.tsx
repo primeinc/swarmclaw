@@ -13,7 +13,7 @@ import { AiAvatar } from '@/components/shared/avatar'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { CodeBlock } from './code-block'
 import { extractMedia, isExplicitScreenshot } from './tool-call-bubble'
-import { ToolEventsSection } from './tool-events-section'
+import { ToolEventsSection, ToolActivityPill } from './tool-events-section'
 import { MessageAttachments } from '@/components/shared/attachment-chip'
 import { MarkdownBody } from '@/components/shared/markdown-body'
 import { MessageActions, ActionButton } from '@/components/shared/message-actions'
@@ -24,6 +24,7 @@ import { DelegationSourceBanner, TaskCompletionCard, parseTaskCompletion } from 
 import { ConnectorPlatformIcon, getConnectorPlatformLabel } from '@/components/shared/connector-platform-icon'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { formatMessageTimestamp } from '@/lib/chat/chat-display'
+import { stripAllInternalMetadata } from '@/lib/strip-internal-metadata'
 
 /** Parse delegation-source metadata prefix from system messages */
 const DELEGATION_SOURCE_RE = /^\[delegation-source:([^:]*):([^:]*):([^\]]*)\]/
@@ -174,7 +175,7 @@ const emptyLiveToolEvents: ToolEvent[] = []
 
 interface LiveStreamState {
   active: boolean
-  phase: 'thinking' | 'tool' | 'responding' | 'connecting'
+  phase: 'queued' | 'thinking' | 'tool' | 'responding' | 'connecting'
   toolName: string
   text: string
   thinking: string
@@ -303,6 +304,7 @@ interface Props {
   agentAvatarSeed?: string
   agentAvatarUrl?: string | null
   agentName?: string
+  cwd?: string
   liveStream?: LiveStreamState
   isLast?: boolean
   onRetry?: () => void
@@ -313,7 +315,7 @@ interface Props {
   momentOverlay?: React.ReactNode
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, assistantName, agentAvatarSeed, agentAvatarUrl, agentName, liveStream, isLast, onRetry, messageIndex, onToggleBookmark, onEditResend, onTransferToAgent, momentOverlay }: Props) {
+export const MessageBubble = memo(function MessageBubble({ message, assistantName, agentAvatarSeed, agentAvatarUrl, agentName, cwd, liveStream, isLast, onRetry, messageIndex, onToggleBookmark, onEditResend, onTransferToAgent, momentOverlay }: Props) {
   const isUser = message.role === 'user'
   const isHeartbeat = !isUser && (message.kind === 'heartbeat' || /^\s*HEARTBEAT_OK\b/i.test(message.text || ''))
   const isExtensionUI = !isUser && message.kind === 'extension-ui'
@@ -393,6 +395,26 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
   )
   const hasToolEvents = !isUser && displayToolEvents.length > 0
 
+  // Tool pill open/close state (lifted from ToolEventsSection)
+  const [toolSectionOpen, setToolSectionOpen] = useState(false)
+  const [toolUserToggled, setToolUserToggled] = useState(false)
+
+  // Auto-expand when tools start running (mirrors old ToolEventsSection behavior)
+  const toolRunningCount = useMemo(() => {
+    let c = 0
+    for (const ev of displayToolEvents) if (ev.status === 'running') c++
+    return c
+  }, [displayToolEvents])
+
+  // Derive effective open state instead of setState during render
+  const effectiveToolSectionOpen = toolSectionOpen || (!toolUserToggled && toolRunningCount > 0)
+
+  const handleToolPillToggle = useCallback(() => {
+    setToolUserToggled(true)
+    setToolSectionOpen((v) => !v)
+  }, [])
+
+
   const effectiveThinking = !isUser
     ? (liveStreamActive ? (liveStream?.thinking?.trim() ? liveStream.thinking : undefined) : message.thinking)
     : undefined
@@ -469,10 +491,11 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
   const taskCompletion = !isUser && message.kind === 'system' ? parseTaskCompletion(message.text || '') : null
   const rawDisplayText = connectorDeliveryTranscript || (delegationSource ? delegationSource.rest : sourceText)
   const displayText = rawDisplayText
-    ? rawDisplayText.split('\n')
-      .filter((l) => !/\[(MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]/.test(l))
-      .filter((l) => !/^\s*\{[^}]*"(?:isDeliverableTask|quality_score)"[^}]*\}\s*$/.test(l))
-      .join('\n').trim()
+    ? stripAllInternalMetadata(
+        rawDisplayText.split('\n')
+          .filter((l) => !/\[(MAIN_LOOP_META|MAIN_LOOP_PLAN|MAIN_LOOP_REVIEW|AGENT_HEARTBEAT_META)\]/.test(l))
+          .join('\n'),
+      )
     : ''
   const hasDisplayText = displayText.length > 0
   const normalizedDisplayText = useMemo(
@@ -576,11 +599,27 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
                   ? `${assistantName || 'Claude'} via ${getConnectorPlatformLabel(message.source.platform)}`
                   : (assistantName || 'Claude'))}
           </span>
-          {!isUser && liveStreamActive && (
-            <span className="w-2 h-2 rounded-full bg-accent-bright" style={{ animation: 'pulse 1.5s ease infinite' }} />
+          {hasToolEvents && (
+            <ToolActivityPill
+              toolEvents={displayToolEvents}
+              isOpen={effectiveToolSectionOpen}
+              onToggle={handleToolPillToggle}
+            />
           )}
-          {!isUser && liveStream?.phase === 'tool' && liveStream.toolName && (
-            <span className="text-[10px] text-text-3/50 font-mono">Using {liveStream.toolName}...</span>
+          {!isUser && liveStreamActive && (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent-bright/10 border border-accent-bright/15"
+              style={{ animation: 'pulse-subtle 2s ease-in-out infinite' }}>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                liveStream?.phase === 'queued' ? 'bg-amber-400' : 'bg-accent-bright'
+              }`} style={{ animation: 'pulse 1.5s ease infinite' }} />
+              <span className="text-[10px] text-accent-bright/80 font-mono font-600">
+                {liveStream?.phase === 'queued' ? 'Queued...'
+                  : liveStream?.phase === 'tool' && liveStream.toolName ? `Using ${liveStream.toolName}...`
+                  : liveStream?.phase === 'responding' ? 'Responding...'
+                  : liveStream?.phase === 'connecting' ? 'Reconnecting...'
+                  : 'Thinking...'}
+              </span>
+            </span>
           )}
           <span className="text-[11px] text-text-3/70 font-mono" title={message.time ? new Date(message.time).toLocaleString() : ''}>
             {message.time ? formatMessageTimestamp(message) : ''}
@@ -593,10 +632,15 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
         )}
       </div>
 
-      {/* Tool call events (assistant messages only) — unified grouped card matching streaming layout */}
-      {hasToolEvents && (
-        <ToolEventsSection toolEvents={displayToolEvents} />
+      {/* Tool events expanded card (controlled by pill toggle) */}
+      {hasToolEvents && effectiveToolSectionOpen && (
+        <div className="max-w-[85%] md:max-w-[72%] mb-2" data-testid="tool-activity">
+          <div className="rounded-[16px] border border-white/[0.08] bg-surface/72 backdrop-blur-sm overflow-hidden">
+            <ToolEventsSection toolEvents={displayToolEvents} controlled />
+          </div>
+        </div>
       )}
+
 
       {/* Thinking block (collapsible, shown for assistant messages with persisted thinking) */}
       {!isUser && effectiveThinking && (
@@ -930,7 +974,7 @@ export const MessageBubble = memo(function MessageBubble({ message, assistantNam
                   }}
                   renderInlineCode={(text) => {
                     if (text && (FILE_PATH_RE.test(text) || (DIR_PATH_RE.test(text) && text.split('/').length > 2))) {
-                      return <FilePathChip filePath={text.replace(/\/$/, '')} />
+                      return <FilePathChip filePath={text.replace(/\/$/, '')} cwd={cwd} />
                     }
                     return null
                   }}

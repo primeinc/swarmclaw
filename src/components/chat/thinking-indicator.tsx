@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AiAvatar } from '@/components/shared/avatar'
@@ -35,16 +36,23 @@ function ElapsedTimer({ startTime }: { startTime: number }) {
   )
 }
 
-export function ThinkingIndicator({ assistantName, agentAvatarSeed, agentAvatarUrl, agentName }: Props) {
-  const streamPhase = useChatStore((s) => s.streamPhase)
-  const streamToolName = useChatStore((s) => s.streamToolName)
-  const thinkingText = useChatStore((s) => s.thinkingText)
-  const thinkingStartTime = useChatStore((s) => s.thinkingStartTime)
-  const agentStatus = useChatStore((s) => s.agentStatus)
+export const ThinkingIndicator = memo(function ThinkingIndicator({ assistantName, agentAvatarSeed, agentAvatarUrl, agentName }: Props) {
+  const { streamPhase, streamToolName, thinkingText, thinkingStartTime, agentStatus } = useChatStore(
+    useShallow((s) => ({
+      streamPhase: s.streamPhase,
+      streamToolName: s.streamToolName,
+      thinkingText: s.thinkingText,
+      thinkingStartTime: s.thinkingStartTime,
+      agentStatus: s.agentStatus,
+    })),
+  )
 
-  const statusText = streamPhase === 'tool' && streamToolName
-    ? `Using ${streamToolName}...`
-    : 'Thinking...'
+  const isQueued = streamPhase === 'queued'
+  const statusText = isQueued
+    ? 'Queued...'
+    : streamPhase === 'tool' && streamToolName
+      ? `Using ${streamToolName}...`
+      : 'Thinking...'
 
   const hasThinkingContent = thinkingText.trim().length > 0
   const hasMission = !!agentStatus?.goal
@@ -53,7 +61,7 @@ export function ThinkingIndicator({ assistantName, agentAvatarSeed, agentAvatarU
     <div className="flex flex-col items-start relative pl-[44px]"
       style={{ animation: 'msg-in-left 0.4s var(--ease-spring) both' }}>
       <div className="absolute left-[4px] top-0">
-        {agentName ? <AgentAvatar seed={agentAvatarSeed || null} avatarUrl={agentAvatarUrl} name={agentName} size={28} /> : <AiAvatar size="sm" mood={streamPhase === 'tool' ? 'tool' : 'thinking'} />}
+        {agentName ? <AgentAvatar seed={agentAvatarSeed || null} avatarUrl={agentAvatarUrl} name={agentName} size={28} /> : <AiAvatar size="sm" mood={isQueued ? 'thinking' : streamPhase === 'tool' ? 'tool' : 'thinking'} />}
       </div>
       
       <div className="flex items-center gap-2.5 mb-2 px-1">
@@ -95,11 +103,11 @@ export function ThinkingIndicator({ assistantName, agentAvatarSeed, agentAvatarU
             
             <div className="flex items-center gap-3 relative z-10">
               <div className="flex gap-2">
-                <span className="w-[6px] h-[6px] rounded-full bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]" style={{ animation: 'dot-bounce 1.2s ease-in-out infinite' }} />
-                <span className="w-[6px] h-[6px] rounded-full bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]" style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.15s' }} />
-                <span className="w-[6px] h-[6px] rounded-full bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]" style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.3s' }} />
+                <span className={`w-[6px] h-[6px] rounded-full ${isQueued ? 'bg-amber-400/70 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]'}`} style={{ animation: 'dot-bounce 1.2s ease-in-out infinite' }} />
+                <span className={`w-[6px] h-[6px] rounded-full ${isQueued ? 'bg-amber-400/70 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]'}`} style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.15s' }} />
+                <span className={`w-[6px] h-[6px] rounded-full ${isQueued ? 'bg-amber-400/70 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]'}`} style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.3s' }} />
               </div>
-              <span className="text-[12px] text-text-3/60 font-mono">{statusText}</span>
+              <span className={`text-[12px] font-mono ${isQueued ? 'text-amber-300/70' : 'text-text-3/60'}`}>{statusText}</span>
               <ElapsedTimer startTime={thinkingStartTime} />
               <svg
                 width="12" height="12" viewBox="0 0 24 24" fill="none"
@@ -125,15 +133,15 @@ export function ThinkingIndicator({ assistantName, agentAvatarSeed, agentAvatarU
           
           <div className="flex items-center gap-3 relative z-10">
             <div className="flex gap-2">
-              <span className="w-[6px] h-[6px] rounded-full bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]" style={{ animation: 'dot-bounce 1.2s ease-in-out infinite' }} />
-              <span className="w-[6px] h-[6px] rounded-full bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]" style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.15s' }} />
-              <span className="w-[6px] h-[6px] rounded-full bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]" style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.3s' }} />
+              <span className={`w-[6px] h-[6px] rounded-full ${isQueued ? 'bg-amber-400/70 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]'}`} style={{ animation: 'dot-bounce 1.2s ease-in-out infinite' }} />
+              <span className={`w-[6px] h-[6px] rounded-full ${isQueued ? 'bg-amber-400/70 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]'}`} style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.15s' }} />
+              <span className={`w-[6px] h-[6px] rounded-full ${isQueued ? 'bg-amber-400/70 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-accent-bright/60 shadow-[0_0_8px_rgba(129,140,248,0.4)]'}`} style={{ animation: 'dot-bounce 1.2s ease-in-out infinite 0.3s' }} />
             </div>
-            <span className="text-[12px] text-text-3/60 font-mono">{statusText}</span>
+            <span className={`text-[12px] font-mono ${isQueued ? 'text-amber-300/70' : 'text-text-3/60'}`}>{statusText}</span>
             <ElapsedTimer startTime={thinkingStartTime} />
           </div>
         </div>
       )}
     </div>
   )
-}
+})

@@ -313,7 +313,10 @@ export function buildCoordinatorSection(
 
   const lines: string[] = [
     '## Coordinator — Available Workers',
-    'You are a **coordinator agent**. Your role is to decompose complex goals into subtasks and delegate them to the right specialist workers. After all subtasks complete, synthesize their results into a coherent final response.',
+    'You are a **coordinator agent**. Your primary role is to orchestrate work by delegating to specialist workers.',
+    'You CAN use tools directly for quick lookups, validation, and reconnaissance (checking files, listing directories, reading configs, light web searches).',
+    'You SHOULD delegate via `spawn_subagent` for substantial work: building projects, writing code, deep research, creating documents, or any multi-step task that matches a worker\'s specialty.',
+    'After delegating, wait for results, then synthesize a coherent final response.',
     '',
     '### Workers',
   ]
@@ -349,6 +352,56 @@ export function buildCoordinatorSection(
   lines.push('')
   lines.push('- Always wait for all delegated work to complete before synthesizing your final response.')
   lines.push('- Match tasks to workers based on their capabilities and description.')
+
+  lines.push('')
+  lines.push('### When to Delegate vs. Do Directly')
+  lines.push('- **Delegate:** Multi-step work, coding, building, deep research, document creation — anything matching a worker\'s specialty')
+  lines.push('- **Do directly:** Quick file reads, listing directories, checking configs, simple web lookups to inform your delegation plan')
+  lines.push('- **Anti-pattern:** Writing multiple files, running build commands, or doing extended research yourself when you have specialist workers available')
+
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Credential Awareness
+// ---------------------------------------------------------------------------
+
+export function buildCredentialAwarenessSection(
+  activeProjectContext: ActiveProjectContext,
+  isMinimalPrompt: boolean,
+): string | null {
+  if (isMinimalPrompt) return null
+  const requirements = activeProjectContext.credentialRequirements
+  if (!requirements || requirements.length === 0) return null
+
+  const secretNames = activeProjectContext.resourceSummary?.secretNames || []
+
+  const missing: string[] = []
+  const available: string[] = []
+  for (const req of requirements) {
+    const reqLower = req.toLowerCase()
+    const isAvailable = secretNames.some(
+      (name) => reqLower.includes(name.toLowerCase()) || name.toLowerCase().includes(reqLower),
+    )
+    if (isAvailable) {
+      available.push(req)
+    } else {
+      missing.push(req)
+    }
+  }
+
+  if (missing.length === 0) return null
+
+  const lines = ['## Credential Status']
+  if (available.length > 0) {
+    lines.push(`Available: ${available.join(', ')}`)
+  }
+  lines.push(`Missing: ${missing.join(', ')}`)
+  lines.push('')
+  lines.push('When you encounter a missing credential, use the self-service workflow:')
+  lines.push('1. manage_secrets(action="check", service="<name>") — verify it is truly missing')
+  lines.push('2. manage_secrets(action="request", service="<name>", reason="<why>") — request it from the human')
+  lines.push('Do NOT report a credential blocker without first checking and requesting.')
 
   return lines.join('\n')
 }

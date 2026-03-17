@@ -11,7 +11,7 @@ import type { Agent } from '@/types'
 const OLLAMA_CLOUD_URL = 'https://ollama.com/v1'
 const OLLAMA_LOCAL_URL = 'http://localhost:11434/v1'
 export const OPENAI_COMPAT_MODEL_TIMEOUT_MS = 180_000
-export const OPENAI_COMPAT_MODEL_MAX_RETRIES = 0
+export const OPENAI_COMPAT_MODEL_MAX_RETRIES = 2
 
 export interface GenerationModelPreference {
   provider?: string | null
@@ -77,6 +77,7 @@ export function buildChatModel(opts: {
       model: model || 'claude-sonnet-4-6',
       anthropicApiKey: resolvedApiKey || undefined,
       maxTokens: 8192,
+      maxRetries: OPENAI_COMPAT_MODEL_MAX_RETRIES,
     }
     if (thinkingLevel) {
       const budgetMap = { minimal: 1024, low: 4096, medium: 8192, high: 16384 }

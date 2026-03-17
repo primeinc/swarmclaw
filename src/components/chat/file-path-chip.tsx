@@ -9,10 +9,10 @@ const PREVIEWABLE_EXT = /\.(html?|svg|json|md|txt)$/i
 const SERVEABLE_EXT = /\.(html?)$/i
 const SERVEABLE_PROJECT = /(^|\/)package\.json$/
 
-export function FilePathChip({ filePath }: { filePath: string }) {
+export function FilePathChip({ filePath, cwd }: { filePath: string; cwd?: string }) {
   const canPreview = PREVIEWABLE_EXT.test(filePath)
   const canServe = SERVEABLE_EXT.test(filePath) || SERVEABLE_PROJECT.test(filePath)
-  const serveUrl = `/api/files/serve?path=${encodeURIComponent(filePath)}`
+  const serveUrl = `/api/files/serve?path=${encodeURIComponent(filePath)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ''}`
 
   const [serverState, setServerState] = useState<{
     running: boolean; url?: string; loading: boolean; type?: string; framework?: string
@@ -53,7 +53,7 @@ export function FilePathChip({ filePath }: { filePath: string }) {
   const isDir = !PREVIEWABLE_EXT.test(filePath) && !filePath.includes('.')
 
   const handleReveal = () => {
-    api('POST', '/files/open', { path: filePath }).catch(() => { /* best-effort */ })
+    api('POST', '/files/open', { path: filePath, cwd }).catch(() => { /* best-effort */ })
   }
 
   return (

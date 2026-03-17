@@ -124,10 +124,10 @@ const COMMAND_GROUPS = {
       'health-check': { description: 'Run daemon health checks immediately', method: 'POST', path: '/daemon/health-check' },
     },
   },
-  dashboard: {
-    description: 'Dashboard summary data',
+  'delegation-jobs': {
+    description: 'Delegation job status',
     commands: {
-      get: { description: 'Get dashboard summary', method: 'GET', path: '/dashboard' },
+      list: { description: 'List active and recent delegation jobs', method: 'GET', path: '/delegation-jobs' },
     },
   },
   dirs: {

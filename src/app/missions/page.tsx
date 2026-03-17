@@ -6,6 +6,7 @@ import { api } from '@/lib/app/api-client'
 import { useWs } from '@/hooks/use-ws'
 import { useAppStore } from '@/stores/use-app-store'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { PageLoader } from '@/components/ui/page-loader'
 import { StatCard } from '@/components/ui/stat-card'
 import { StructuredSessionLauncher } from '@/components/protocols/structured-session-launcher'
 import { timeAgo } from '@/lib/time-format'
@@ -332,7 +333,7 @@ export default function MissionsPage() {
             </div>
             <div className="max-h-[70vh] min-h-0 space-y-2 overflow-y-auto pr-1">
               {loading ? (
-                <div className="px-3 py-4 text-[13px] text-text-3/55">Loading missions…</div>
+                <PageLoader label="Loading missions..." />
               ) : filtered.length === 0 ? (
                 <div className="px-3 py-4 text-[13px] text-text-3/55">No missions match the current filters.</div>
               ) : filtered.map((mission) => {
@@ -385,7 +386,7 @@ export default function MissionsPage() {
                 Select a mission to inspect its detail, linked work, and operator actions.
               </div>
             ) : detailLoading && !selectedMission ? (
-              <div className="px-2 py-4 text-[13px] text-text-3/55">Loading mission detail…</div>
+              <PageLoader label="Loading mission..." />
             ) : selectedMission ? (
               <div className="space-y-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

@@ -712,10 +712,15 @@ async function drainExecution(executionKey: string): Promise<void> {
   try {
   if (state.runningByExecution.has(executionKey)) return
   const q = queueForExecution(executionKey)
-  // Priority: user (non-heartbeat) runs go first. If a heartbeat is queued
-  // behind a user run, the user run takes priority.
-  const userIdx = q.findIndex(e => !isInternalHeartbeatRun(e.run.internal, e.run.source))
-  const next = userIdx >= 0 ? q.splice(userIdx, 1)[0] : q.shift()
+  // 3-tier drain priority: (1) user-facing, (2) internal non-heartbeat, (3) heartbeat
+  const userIdx = q.findIndex(e => !e.run.internal)
+  let next: QueueEntry | undefined
+  if (userIdx >= 0) {
+    next = q.splice(userIdx, 1)[0]
+  } else {
+    const internalIdx = q.findIndex(e => !isInternalHeartbeatRun(e.run.internal, e.run.source))
+    next = internalIdx >= 0 ? q.splice(internalIdx, 1)[0] : q.shift()
+  }
   if (!next) {
     clearDeferredDrain(executionKey)
     return
@@ -860,6 +865,12 @@ async function drainExecution(executionKey: string): Promise<void> {
       error: next.run.error,
       durationMs: (next.run.endedAt || now()) - (next.run.startedAt || now()),
     })
+    if (err instanceof Error && err.stack) {
+      log.error('session-run', `Run failed stack trace ${next.run.id}`, {
+        sessionId: next.run.sessionId,
+        stack: err.stack,
+      })
+    }
     queueAutonomyObservation({
       runId: next.run.id,
       sessionId: next.run.sessionId,
@@ -1129,6 +1140,7 @@ export function enqueueSessionRun(input: EnqueueSessionRunInput): EnqueueSession
     resolve = res
     reject = rej
   })
+  promise.catch(() => {})  // prevent unhandledRejection when entry is cancelled
   state.promises.set(runId, promise)
 
   const entry: QueueEntry = {

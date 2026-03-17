@@ -8,6 +8,7 @@ import { api } from '@/lib/app/api-client'
 import { fetchMessages } from '@/lib/chat/chats'
 import { streamChat } from '@/lib/chat/chat'
 import type { Agent, Message, Session, SSEEvent } from '@/types'
+import { INTERNAL_KEY_RE, stripAllInternalMetadata } from '@/lib/strip-internal-metadata'
 
 interface Props {
   agent: Agent
@@ -16,14 +17,18 @@ interface Props {
 }
 
 const BUBBLE_W = 320
-const INTERNAL_JSON_LINE_RE = /^\s*\{[^}]*"(?:isDeliverableTask|quality_score)"[^}]*\}\s*$/
 
-function stripInternalJson(text: string): string {
-  return text
-    .split('\n')
-    .filter((line) => !INTERNAL_JSON_LINE_RE.test(line))
-    .join('\n')
-    .trim()
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+
+/** Filter status text that looks like raw IDs or data dumps */
+function sanitizeToolStatus(text: string): string | null {
+  if (!text) return null
+  // Skip raw arrays or objects
+  if (text.startsWith('[') || text.startsWith('{')) return null
+  // Skip if it looks like it's mostly UUIDs
+  if (UUID_RE.test(text)) return null
+  // Truncate to reasonable length
+  return text.slice(0, 60)
 }
 
 export function MiniChatBubble({ agent, onClose, onToolActivity }: Props) {
@@ -96,16 +101,18 @@ export function MiniChatBubble({ agent, onClose, onToolActivity }: Props) {
           break
         case 'md':
           // Skip run-status metadata (JSON blobs from the queue system)
-          if (event.text && !event.text.startsWith('{')) {
+          if (event.text && !event.text.startsWith('{') && !INTERNAL_KEY_RE.test(event.text)) {
             setStreamText((prev) => prev + event.text)
           }
           break
         case 'tool_call':
           if (event.toolName) onToolActivity?.(event.toolName)
           break
-        case 'status':
-          if (event.text) onToolActivity?.(event.text)
+        case 'status': {
+          const cleaned = event.text ? sanitizeToolStatus(event.text) : null
+          if (cleaned) onToolActivity?.(cleaned)
           break
+        }
         case 'done':
           // Refresh messages to get the final state
           fetchMessages(sessionId).then((msgs) => setMessages(msgs)).catch(() => {})
@@ -175,7 +182,7 @@ export function MiniChatBubble({ agent, onClose, onToolActivity }: Props) {
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-[8px] px-2.5 py-1.5 bg-white/[0.04] border border-white/[0.06]">
               <div className="mini-chat-md text-[12px] text-text-2 leading-relaxed">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripInternalJson(streamText)}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripAllInternalMetadata(streamText)}</ReactMarkdown>
               </div>
               <span className="inline-block w-[5px] h-[12px] bg-accent-bright/60 ml-0.5 animate-pulse" />
             </div>
@@ -258,7 +265,7 @@ function MessageRow({ message }: { message: Message }) {
           <p className="text-[12px] text-text leading-relaxed whitespace-pre-wrap break-words">{message.text}</p>
         ) : (
           <div className="mini-chat-md text-[12px] text-text-2 leading-relaxed">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripInternalJson(message.text)}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripAllInternalMetadata(message.text)}</ReactMarkdown>
           </div>
         )}
       </div>

@@ -155,6 +155,7 @@ const COLLECTIONS = [
   'protocol_run_events',
   'provider_health',
   'swarm_snapshots',
+  'main_loop_states',
 ] as const
 
 export type StorageCollection = (typeof COLLECTIONS)[number]
@@ -1548,6 +1549,12 @@ export const loadDelegationJobs = delegationJobsStore.load
 export const upsertDelegationJob = delegationJobsStore.upsert
 export const { patch: patchDelegationJob } = delegationJobsStore
 export const deleteDelegationJob = delegationJobsStore.deleteItem
+
+// --- Main Loop States ---
+const mainLoopStatesStore = createCollectionStore('main_loop_states')
+export const loadPersistedMainLoopState = mainLoopStatesStore.loadItem
+export const upsertPersistedMainLoopState = mainLoopStatesStore.upsert
+export const deletePersistedMainLoopState = mainLoopStatesStore.deleteItem
 
 export function getSessionMessages(sessionId: string): Message[] {
   const session = loadSession(sessionId)

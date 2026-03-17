@@ -15,6 +15,19 @@ Docs: https://swarmclaw.ai/docs
 Website: https://swarmclaw.ai  
 Extension tutorial: https://swarmclaw.ai/docs/extension-tutorial
 
+## Screenshots
+
+<table>
+ <tr>
+  <td width="50%"><img src="doc/assets/screenshots/org-chart.png" alt="SwarmClaw org chart view showing CEO, Developer, and Researcher agents." /></td>
+  <td width="50%"><img src="doc/assets/screenshots/agent-chat.png" alt="SwarmClaw agent chat view showing a CEO conversation." /></td>
+ </tr>
+ <tr>
+  <td align="center"><sub>Org chart for visualizing agent teams, delegation, and live activity.</sub></td>
+  <td align="center"><sub>Agent chat with durable history, tools, and operator controls.</sub></td>
+ </tr>
+</table>
+
 <div align="center">
 <table>
  <tr>
@@ -177,6 +190,21 @@ The building blocks are the same: **agents, tools, memory, delegation, schedules
 
 ## Release Notes
 
+### v1.1.7 Highlights
+
+- **Projects page redesign**: tabbed navigation (Overview, Work, Operations, Activity) with health grid, sortable task list, and timeline feed.
+- **Delegation visualization**: live org chart edges show active delegations with status, direction, and message popover on click.
+- **Credential self-service**: agents can check whether a credential exists and request missing ones from humans with structured messages, signup URLs, and durable wait.
+- **Main loop state persistence**: autonomous operation state now survives server restarts via on-disk persistence.
+- **Internal metadata stripping**: classification JSON and loop detection messages no longer leak into streamed agent output.
+- **Response completeness evaluator**: LLM-based detection of incomplete agent responses triggers continuation nudges.
+- **Coordinator delegation nudging**: coordinators that make 3+ direct tool calls get prompted to delegate to workers.
+- **Inspector panel overhaul**: new dashboard/config/files tabs absorb model switcher and workspace controls from chat header.
+- **Streaming phase indicators**: agent chat list shows queued, tool-in-use, responding, and reconnecting states.
+- **Shell safety**: agents can no longer kill SwarmClaw's own process or port.
+- **Worker-only providers**: CLI-backed providers (claude-cli, codex-cli, etc.) properly restricted from coordinator/heartbeat roles.
+- **HTTP tool removed**: the built-in HTTP session tool was removed from the standard toolkit.
+
 ### v1.1.6 Highlights
 
 - **Org chart view**: visual agent hierarchy with drag-and-drop reparenting, team grouping, and context-menu actions for managing agent relationships directly from the canvas.
@@ -202,17 +230,6 @@ The building blocks are the same: **agents, tools, memory, delegation, schedules
 - **Storage writes are safer**: credential and agent saves were tightened to upsert-only behavior and bulk-delete safety guards so tests or scripts cannot accidentally wipe live state.
 - **Plugin-to-extension cleanup finished**: remaining rename residue in scripts and tests was cleaned up so packaging and release tooling stay aligned with the current extensions model.
 - **Safe body parsing utility**: shared `safeParseBody()` replaces scattered `await req.json()` try/catch blocks across API routes.
-
-### v1.1.4 Highlights
-
-- **Orchestrator agents as a real agent mode**: eligible agents can now run scheduled orchestrator wake cycles with their own mission, governance policy, wake interval, and cycle cap.
-- **Runtime durability and recovery**: configurable parallel task execution, stuck-task idle timeout detection, orphaned running-task recovery on startup, and restart-safe swarm/provider-health persistence.
-- **Failover and safety improvements**: provider errors classified for smarter routing, agent budget limits block task execution before it starts.
-
-### v1.1.3 Highlights
-
-- **`build:ci` repair**: fixed the langgraph checkpoint duplicate-column crash that blocked CI/build validation.
-- **Safer storage writes**: credentials and agents use upsert-only save behavior, and a collection safety guard blocks accidental bulk-delete paths.
 
 ### v1.1.2 Highlights
 

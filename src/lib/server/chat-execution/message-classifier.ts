@@ -201,6 +201,7 @@ export async function classifyMessage(
 
   const prompt = buildClassificationPrompt(message, recentHistory)
 
+  const startMs = Date.now()
   try {
     const responseText = await Promise.race([
       options?.generateText
@@ -218,12 +219,17 @@ export async function classifyMessage(
       ),
     ])
 
+    const durationMs = Date.now() - startMs
+    console.log(`[message-classifier] session=${input.sessionId} completed in ${durationMs}ms`)
+
     const classification = parseClassificationResponse(responseText)
     if (classification) {
       setCache(message, classification)
     }
     return classification
-  } catch {
+  } catch (err: unknown) {
+    const durationMs = Date.now() - startMs
+    console.warn(`[message-classifier] session=${input.sessionId} failed in ${durationMs}ms: ${err instanceof Error ? err.message : 'unknown'}`)
     return null
   }
 }
