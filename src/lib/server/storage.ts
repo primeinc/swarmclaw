@@ -1,7 +1,6 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
-import Database from 'better-sqlite3'
 
 import { perf } from '@/lib/server/runtime/perf'
 import { log } from '@/lib/server/logger'
@@ -52,13 +51,45 @@ import {
   getSessionsCache,
 } from './storage-cache'
 import { normalizeStoredRecord, type NormalizationResult } from './storage-normalization'
-import {
-  tryAcquireRuntimeLock as _tryAcquireRuntimeLock,
-  renewRuntimeLock as _renewRuntimeLock,
-  readRuntimeLock as _readRuntimeLock,
-  isRuntimeLockActive as _isRuntimeLockActive,
-  releaseRuntimeLock as _releaseRuntimeLock,
-} from './storage-locks'
+
+// --- Storage backend ---
+import type { StorageBackend } from './storage-backend'
+import { createSQLiteBackend } from './storage-backend-sqlite'
+import { hmrSingleton } from '@/lib/shared-utils'
+
+// The active backend — SQLite by default, Cosmos when STORAGE_BACKEND=cosmos.
+// initializeStorageBackend() must be called from instrumentation.ts before requests arrive.
+const _backendHolder = hmrSingleton('__swarmclaw_storage_backend__', () => ({
+  backend: null as StorageBackend | null,
+}))
+
+function getBackend(): StorageBackend {
+  if (!_backendHolder.backend) {
+    // Lazy fallback for build-time and early callers — always SQLite.
+    _backendHolder.backend = createSQLiteBackend()
+  }
+  return _backendHolder.backend
+}
+
+/**
+ * Initialize the storage backend. Called from instrumentation.ts.
+ * For Cosmos mode, this loads all data into memory before requests start.
+ */
+export async function initializeStorageBackend(): Promise<void> {
+  if (process.env.STORAGE_BACKEND === 'cosmos') {
+    const { createCosmosMemoryBackend } = await import('./storage-backend-cosmos')
+    _backendHolder.backend = createCosmosMemoryBackend()
+    await _backendHolder.backend.initialize()
+  } else if (!_backendHolder.backend) {
+    _backendHolder.backend = createSQLiteBackend()
+    await _backendHolder.backend.initialize()
+  }
+}
+
+/** Drain the write queue on shutdown (important for Cosmos write-behind). */
+export async function shutdownStorageBackend(): Promise<void> {
+  if (_backendHolder.backend) await _backendHolder.backend.shutdown()
+}
 
 // Re-export cache classes/utilities for any external consumers
 export { TTLCache, LRUMap } from './storage-cache'
@@ -82,103 +113,21 @@ for (const dir of [DATA_DIR, UPLOAD_DIR, WORKSPACE_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
-// --- SQLite Database ---
-const DB_PATH = IS_BUILD_BOOTSTRAP ? ':memory:' : path.join(DATA_DIR, 'swarmclaw.db')
-const db = new Database(DB_PATH)
-if (!IS_BUILD_BOOTSTRAP) {
-  db.pragma('journal_mode = WAL')
-  db.pragma('busy_timeout = 5000')
-  db.pragma('synchronous = NORMAL')
-  db.pragma('cache_size = -64000')
-  db.pragma('mmap_size = 268435456')
-}
-db.pragma('foreign_keys = ON')
-
 /** Run a function inside an immediate SQLite transaction for atomicity. */
 export function withTransaction<T>(fn: () => T): T {
-  const wrapped = db.transaction(fn)
-  return wrapped()
+  return getBackend().withTransaction(fn)
 }
 
 type StoredObject = Record<string, unknown>
 type StoredSessionRecord = Session
 type StoredAgentRecord = Agent
 
-// Collection tables (id → JSON blob)
-const COLLECTIONS = [
-  'sessions',
-  'credentials',
-  'agents',
-  'schedules',
-  'tasks',
-  'secrets',
-  'provider_configs',
-  'gateway_profiles',
-  'skills',
-  'learned_skills',
-  'skill_suggestions',
-  'supervisor_incidents',
-  'run_reflections',
-  'runtime_runs',
-  'runtime_run_events',
-  'runtime_estop',
-  'connectors',
-  'documents',
-  'document_revisions',
-  'webhooks',
-  'model_overrides',
-  'mcp_servers',
-  'integrity_baselines',
-  'webhook_logs',
-  'projects',
-  'activity',
-  'webhook_retry_queue',
-  'notifications',
-  'chatrooms',
-  'wallets',
-  'wallet_transactions',
-  'wallet_balance_history',
-  'moderation_logs',
-  'connector_health',
-  'connector_outbox',
-  'souls',
-  'benchmarks',
-  'approvals',
-  'guardian_checkpoints',
-  'browser_sessions',
-  'watch_jobs',
-  'delegation_jobs',
-  'external_agents',
-  'missions',
-  'mission_events',
-  'protocol_templates',
-  'protocol_runs',
-  'protocol_run_events',
-  'provider_health',
-  'swarm_snapshots',
-  'main_loop_states',
-] as const
+// Collection tables — single source of truth in storage-collections.ts
+export { COLLECTIONS, type StorageCollection } from './storage-collections'
+import type { StorageCollection } from './storage-collections'
 
-export type StorageCollection = (typeof COLLECTIONS)[number]
-
-for (const table of COLLECTIONS) {
-  db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY, data TEXT NOT NULL)`)
-}
-
-// Index for efficient protocol_run_events queries by runId
-db.exec(`CREATE INDEX IF NOT EXISTS idx_protocol_run_events_runid ON protocol_run_events (json_extract(data, '$.runId'))`)
-
-// Singleton tables (single row)
-db.exec(`CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL)`)
-db.exec(`CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL)`)
-db.exec(`CREATE TABLE IF NOT EXISTS usage (session_id TEXT NOT NULL, data TEXT NOT NULL)`)
-db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_session ON usage(session_id)`)
-db.exec(`CREATE TABLE IF NOT EXISTS runtime_locks (
-  name TEXT PRIMARY KEY,
-  owner TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-)`)
+// Table creation is handled by the SQLite backend constructor.
+// For Cosmos, tables don't need creation — containers are provisioned via Bicep.
 
 // --- Internal normalize helper that binds the loadItem dependency ---
 function normalize(table: string, value: unknown): NormalizationResult {
@@ -191,16 +140,16 @@ function normalizeValue(table: string, value: unknown): unknown {
 }
 
 function readCollectionRaw(table: string): LRUMap<string, string> {
-  const rows = db.prepare(`SELECT id, data FROM ${table}`).all() as { id: string; data: string }[]
+  const rawMap = getBackend().readCollectionRaw(table)
   const raw = new LRUMap<string, string>(capacityFor(table))
-  for (const row of rows) {
-    raw.set(row.id, row.data)
+  for (const [id, data] of rawMap) {
+    raw.set(id, data)
   }
   return raw
 }
 
 function getCollectionRawCache(table: string): LRUMap<string, string> {
-  // Always reload from SQLite so concurrent Next.js workers/processes
+  // Always reload from the backend so concurrent Next.js workers/processes
   // observe each other's writes immediately.
   const loaded = readCollectionRaw(table)
   collectionCache.set(table, loaded)
@@ -274,17 +223,7 @@ function saveCollection(table: string, data: Record<string, unknown>) {
     return
   }
 
-  const transaction = db.transaction(() => {
-    if (toDelete.length) {
-      const del = db.prepare(`DELETE FROM ${table} WHERE id = ?`)
-      for (const id of toDelete) del.run(id)
-    }
-    const upsert = db.prepare(`INSERT OR REPLACE INTO ${table} (id, data) VALUES (?, ?)`)
-    for (const [id, serialized] of toUpsert) {
-      upsert.run(id, serialized)
-    }
-  })
-  transaction()
+  getBackend().saveCollection(table, toUpsert, toDelete)
   endPerf({ upserts: toUpsert.length, deletes: toDelete.length })
 
   for (const id of toDelete) {
@@ -296,7 +235,7 @@ function saveCollection(table: string, data: Record<string, unknown>) {
 }
 
 function deleteCollectionItem(table: string, id: string) {
-  db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id)
+  getBackend().deleteItem(table, id)
   const cached = collectionCache.get(table)
   if (cached) cached.delete(id)
   invalidateDerivedCollectionCaches(table)
@@ -320,7 +259,7 @@ function invalidateDerivedCollectionCaches(table: string): void {
  */
 function upsertCollectionItem(table: string, id: string, value: unknown) {
   const serialized = JSON.stringify(normalizeValue(table, value))
-  db.prepare(`INSERT OR REPLACE INTO ${table} (id, data) VALUES (?, ?)`).run(id, serialized)
+  getBackend().upsertItem(table, id, serialized)
   // Update the in-memory cache
   const cached = collectionCache.get(table)
   if (cached) {
@@ -330,10 +269,12 @@ function upsertCollectionItem(table: string, id: string, value: unknown) {
 }
 
 function loadCollectionItem(table: string, id: string): unknown | null {
-  const row = db.prepare(`SELECT data FROM ${table} WHERE id = ?`).get(id) as { data: string } | undefined
-  if (!row) return null
+  // Check collection cache first, fall back to backend point read
+  const cached = collectionCache.get(table)
+  const rawJson = cached?.get(id) ?? getBackend().readItem(table, id)
+  if (!rawJson) return null
   try {
-    return normalizeValue(table, JSON.parse(row.data))
+    return normalizeValue(table, JSON.parse(rawJson))
   } catch {
     return null
   }
@@ -346,13 +287,7 @@ function upsertCollectionItems(table: string, entries: Array<[string, unknown]>)
     .filter(([, serialized]) => typeof serialized === 'string')
   if (!prepared.length) return
 
-  const transaction = db.transaction(() => {
-    const upsert = db.prepare(`INSERT OR REPLACE INTO ${table} (id, data) VALUES (?, ?)`)
-    for (const [id, serialized] of prepared) {
-      upsert.run(id, serialized)
-    }
-  })
-  transaction()
+  getBackend().upsertItems(table, prepared.map(([id, serialized]) => [id, serialized]))
 
   const cached = collectionCache.get(table)
   if (cached) {
@@ -381,7 +316,7 @@ export function patchStoredItem<T>(
   updater: (current: T | null) => T | null,
 ): T | null {
   let nextValue: T | null = null
-  const transaction = db.transaction(() => {
+  getBackend().withTransaction(() => {
     const current = loadCollectionItem(table, id) as T | null
     nextValue = updater(current)
     if (nextValue === null) {
@@ -390,12 +325,11 @@ export function patchStoredItem<T>(
     }
     upsertCollectionItem(table, id, nextValue)
   })
-  transaction()
   return nextValue
 }
 
 export function deleteStoredItem(table: StorageCollection, id: string): void {
-  db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id)
+  getBackend().deleteItem(table, id)
   const cached = collectionCache.get(table)
   if (cached) cached.delete(id)
 }
@@ -469,51 +403,49 @@ function createCollectionStore<T = any>(
 }
 
 function loadSingleton<T>(table: string, fallback: T): T {
-  const row = db.prepare(`SELECT data FROM ${table} WHERE id = 1`).get() as { data: string } | undefined
-  return row ? JSON.parse(row.data) as T : fallback
+  const json = getBackend().readSingleton(table)
+  return json ? JSON.parse(json) as T : fallback
 }
 
 function saveSingleton(table: string, data: unknown) {
-  db.prepare(`INSERT OR REPLACE INTO ${table} (id, data) VALUES (1, ?)`).run(JSON.stringify(data))
+  getBackend().writeSingleton(table, JSON.stringify(data))
 }
 
 export function patchQueue<T>(updater: (queue: string[]) => T): T {
   let result!: T
-  const transaction = db.transaction(() => {
+  getBackend().withTransaction(() => {
     const current = loadSingleton('queue', [])
     const queue = Array.isArray(current) ? [...current] : []
     result = updater(queue)
     saveSingleton('queue', queue)
   })
-  transaction()
   return result
 }
 
-// --- Runtime Locks (delegated to storage-locks, bound to db) ---
+// --- Runtime Locks (delegated to backend) ---
 
 export function tryAcquireRuntimeLock(name: string, owner: string, ttlMs: number): boolean {
-  return _tryAcquireRuntimeLock(db, name, owner, ttlMs)
+  return getBackend().tryAcquireLock(name, owner, ttlMs)
 }
 
 export function renewRuntimeLock(name: string, owner: string, ttlMs: number): boolean {
-  return _renewRuntimeLock(db, name, owner, ttlMs)
+  return getBackend().renewLock(name, owner, ttlMs)
 }
 
 export function readRuntimeLock(name: string): { owner: string; expiresAt: number; updatedAt: number } | null {
-  return _readRuntimeLock(db, name)
+  return getBackend().readLock(name)
 }
 
 export function isRuntimeLockActive(name: string): boolean {
-  return _isRuntimeLockActive(db, name)
+  return getBackend().isLockActive(name)
 }
 
 export function releaseRuntimeLock(name: string, owner: string): void {
-  _releaseRuntimeLock(db, name, owner)
+  getBackend().releaseLock(name, owner)
 }
 
 export function pruneExpiredLocks(): number {
-  const result = db.prepare('DELETE FROM runtime_locks WHERE expires_at < ?').run(Date.now())
-  return result.changes
+  return getBackend().pruneExpiredLocks()
 }
 
 // --- JSON Migration ---
@@ -543,19 +475,21 @@ const MIGRATION_FLAG = path.join(DATA_DIR, '.sqlite_migrated')
 
 function migrateFromJson() {
   if (fs.existsSync(MIGRATION_FLAG)) return
+  // JSON migration only applies to SQLite — Cosmos gets data via its own initialization.
+  if (process.env.STORAGE_BACKEND === 'cosmos') return
 
   log.info(TAG, 'Migrating from JSON files to SQLite...')
 
-  const transaction = db.transaction(() => {
+  getBackend().withTransaction(() => {
     for (const [table, jsonPath] of Object.entries(JSON_FILES)) {
       if (fs.existsSync(jsonPath)) {
         try {
           const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
           if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-            const ins = db.prepare(`INSERT OR REPLACE INTO ${table} (id, data) VALUES (?, ?)`)
-            for (const [id, val] of Object.entries(data)) {
-              ins.run(id, JSON.stringify(val))
-            }
+            const entries: Array<[string, string]> = Object.entries(data).map(
+              ([id, val]) => [id, JSON.stringify(val)],
+            )
+            getBackend().upsertItems(table, entries)
             log.info(TAG, `Migrated ${table}: ${Object.keys(data).length} records`)
           }
         } catch { /* skip malformed files */ }
@@ -591,11 +525,10 @@ function migrateFromJson() {
     if (fs.existsSync(usagePath)) {
       try {
         const data = JSON.parse(fs.readFileSync(usagePath, 'utf8'))
-        const ins = db.prepare(`INSERT INTO usage (session_id, data) VALUES (?, ?)`)
         for (const [sessionId, records] of Object.entries(data)) {
           if (Array.isArray(records)) {
             for (const record of records) {
-              ins.run(sessionId, JSON.stringify(record))
+              getBackend().appendUsage(sessionId, JSON.stringify(record))
             }
           }
         }
@@ -604,7 +537,6 @@ function migrateFromJson() {
     }
   })
 
-  transaction()
   fs.writeFileSync(MIGRATION_FLAG, new Date().toISOString())
   log.info(TAG, 'Migration complete. JSON files preserved as backup.')
 }
@@ -634,7 +566,7 @@ if (!IS_BUILD_BOOTSTRAP) {
     'codex_cli',
     'opencode_cli',
   ]
-  const count = (db.prepare('SELECT COUNT(*) as c FROM agents').get() as { c: number }).c
+  const count = getBackend().countItems('agents')
   if (count === 0) {
     const defaultAgent = {
       id: 'default',
@@ -684,12 +616,13 @@ Be concise but not curt. Warmth doesn't require verbosity. When someone asks "ho
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
-    db.prepare(`INSERT OR REPLACE INTO agents (id, data) VALUES (?, ?)`).run('default', JSON.stringify(defaultAgent))
+    getBackend().upsertItem('agents', 'default', JSON.stringify(defaultAgent))
   } else {
-    const row = db.prepare('SELECT data FROM agents WHERE id = ?').get('default') as { data: string } | undefined
-    if (row?.data) {
+    const raw = getBackend().readCollectionRaw('agents')
+    const rowData = raw.get('default')
+    if (rowData) {
       try {
-        const existing = JSON.parse(row.data) as Record<string, unknown>
+        const existing = JSON.parse(rowData) as Record<string, unknown>
         const existingTools = Array.isArray(existing.tools) ? existing.tools as string[] : []
         const mergedTools = dedup([...existingTools, ...defaultStarterTools]).filter((t) => t !== 'delete_file')
         if (JSON.stringify(existingTools) !== JSON.stringify(mergedTools)) {
@@ -709,8 +642,8 @@ Be concise but not curt. Warmth doesn't require verbosity. When someone asks "ho
           existing.autoDraftSkillSuggestions = true
           existing.updatedAt = Date.now()
         }
-        if (JSON.stringify(JSON.parse(row.data)) !== JSON.stringify(existing)) {
-          db.prepare('UPDATE agents SET data = ? WHERE id = ?').run(JSON.stringify(existing), 'default')
+        if (JSON.stringify(JSON.parse(rowData)) !== JSON.stringify(existing)) {
+          getBackend().upsertItem('agents', 'default', JSON.stringify(existing))
         }
       } catch {
         // ignore malformed default agent payloads
@@ -796,32 +729,20 @@ export function patchSession(id: string, updater: (current: Session | null) => S
 }
 
 export function disableAllSessionHeartbeats(): number {
-  const rows = db.prepare('SELECT id, data FROM sessions').all() as Array<{ id: string; data: string }>
-  if (!rows.length) return 0
-
-  const update = db.prepare('UPDATE sessions SET data = ? WHERE id = ?')
-  let changed = 0
-
-  const tx = db.transaction(() => {
-    for (const row of rows) {
-      let parsed: StoredObject | null = null
-      try {
-        parsed = JSON.parse(row.data) as StoredObject
-      } catch {
-        continue
-      }
-      if (!parsed || typeof parsed !== 'object') continue
-      if (parsed.heartbeatEnabled === false) continue
-
-      parsed.heartbeatEnabled = false
-      parsed.lastActiveAt = Date.now()
-      update.run(JSON.stringify(parsed), row.id)
-      changed += 1
+  return getBackend().bulkUpdate('sessions', (_id: string, json: string) => {
+    let parsed: StoredObject | null = null
+    try {
+      parsed = JSON.parse(json) as StoredObject
+    } catch {
+      return null
     }
-  })
-  tx()
+    if (!parsed || typeof parsed !== 'object') return null
+    if (parsed.heartbeatEnabled === false) return null
 
-  return changed
+    parsed.heartbeatEnabled = false
+    parsed.lastActiveAt = Date.now()
+    return JSON.stringify(parsed)
+  })
 }
 
 // --- Credentials ---
@@ -1245,13 +1166,11 @@ export const upsertProtocolRunEvents = protocolRunEventsStore.upsertMany as (ent
 export const deleteProtocolRunEvent = protocolRunEventsStore.deleteItem
 
 export function loadProtocolRunEventsByRunId(runId: string): ProtocolRunEvent[] {
-  const rows = db.prepare(
-    `SELECT data FROM protocol_run_events WHERE json_extract(data, '$.runId') = ? ORDER BY json_extract(data, '$.createdAt') ASC`,
-  ).all(runId) as Array<{ data: string }>
+  const rawRows = getBackend().queryByJsonField('protocol_run_events', '$.runId', runId, '$.createdAt')
   const results: ProtocolRunEvent[] = []
-  for (const row of rows) {
+  for (const json of rawRows) {
     try {
-      results.push(JSON.parse(row.data) as ProtocolRunEvent)
+      results.push(JSON.parse(json) as ProtocolRunEvent)
     } catch { /* skip malformed rows */ }
   }
   return results
@@ -1316,15 +1235,13 @@ export const loadRuntimeRunEvents = runtimeRunEventsStore.load as () => Record<s
 export const saveRuntimeRunEvents = runtimeRunEventsStore.save as (items: Record<string, RunEventRecord>) => void
 export const upsertRuntimeRunEvent = runtimeRunEventsStore.upsert as (id: string, value: RunEventRecord) => void
 
-/** Load run events filtered by runId at the SQL level (avoids full-table scan). */
+/** Load run events filtered by runId (uses json_extract on SQLite, in-memory scan on Cosmos). */
 export function loadRuntimeRunEventsByRunId(runId: string): RunEventRecord[] {
-  const rows = db.prepare(
-    `SELECT data FROM runtime_run_events WHERE json_extract(data, '$.runId') = ? ORDER BY json_extract(data, '$.timestamp') ASC`,
-  ).all(runId) as Array<{ data: string }>
+  const rawRows = getBackend().queryByJsonField('runtime_run_events', '$.runId', runId, '$.timestamp')
   const results: RunEventRecord[] = []
-  for (const row of rows) {
+  for (const json of rawRows) {
     try {
-      results.push(JSON.parse(row.data) as RunEventRecord)
+      results.push(JSON.parse(json) as RunEventRecord)
     } catch { /* skip malformed */ }
   }
   return results
@@ -1353,8 +1270,7 @@ export const saveExternalAgents = externalAgentsStore.save as (items: Record<str
 
 // --- Usage ---
 export function loadUsage(): Record<string, UsageRecord[]> {
-  const stmt = db.prepare('SELECT session_id, data FROM usage')
-  const rows = stmt.all() as { session_id: string; data: string }[]
+  const rows = getBackend().readAllUsage()
   const result: Record<string, UsageRecord[]> = {}
   for (const row of rows) {
     if (!result[row.session_id]) result[row.session_id] = []
@@ -1364,55 +1280,30 @@ export function loadUsage(): Record<string, UsageRecord[]> {
 }
 
 export function getUsageSpendSince(minTimestamp: number): number {
-  try {
-    const row = db.prepare(`
-      SELECT COALESCE(SUM(CAST(json_extract(data, '$.estimatedCost') AS REAL)), 0) AS total
-      FROM usage
-      WHERE CAST(COALESCE(json_extract(data, '$.timestamp'), 0) AS INTEGER) >= ?
-    `).get(minTimestamp) as { total?: number | null } | undefined
-    const total = Number(row?.total ?? 0)
-    return Number.isFinite(total) ? total : 0
-  } catch {
-    let total = 0
-    const usage = loadUsage()
-    for (const records of Object.values(usage)) {
-      for (const record of records || []) {
-        const rec = record as unknown as Record<string, unknown>
-        const ts = typeof rec?.timestamp === 'number' ? rec.timestamp : 0
-        if (ts < minTimestamp) continue
-        const cost = typeof rec?.estimatedCost === 'number' ? rec.estimatedCost : 0
-        if (Number.isFinite(cost) && cost > 0) total += cost
-      }
-    }
-    return total
-  }
+  return getBackend().getUsageSpendSince(minTimestamp)
 }
 
 export function saveUsage(u: Record<string, UsageRecord[]>) {
-  const del = db.prepare('DELETE FROM usage')
-  const ins = db.prepare('INSERT INTO usage (session_id, data) VALUES (?, ?)')
-  const transaction = db.transaction(() => {
-    del.run()
-    for (const [sessionId, records] of Object.entries(u)) {
-      for (const record of records) {
-        ins.run(sessionId, JSON.stringify(record))
-      }
+  // Note: full-replace of usage data. For Cosmos, we rebuild the in-memory state.
+  // This is only called from the usage cleanup/migration path, not hot paths.
+  const rows = getBackend().readAllUsage()
+  // Prune everything, then re-insert
+  if (rows.length > 0) {
+    getBackend().pruneOldUsage(0) // delete all
+  }
+  for (const [sessionId, records] of Object.entries(u)) {
+    for (const record of records) {
+      getBackend().appendUsage(sessionId, JSON.stringify(record))
     }
-  })
-  transaction()
+  }
 }
 
 export function appendUsage(sessionId: string, record: unknown) {
-  const ins = db.prepare('INSERT INTO usage (session_id, data) VALUES (?, ?)')
-  ins.run(sessionId, JSON.stringify(record))
+  getBackend().appendUsage(sessionId, JSON.stringify(record))
 }
 
 export function pruneOldUsage(maxAgeMs: number): number {
-  const cutoff = Date.now() - maxAgeMs
-  const result = db.prepare(
-    `DELETE FROM usage WHERE CAST(COALESCE(json_extract(data, '$.timestamp'), 0) AS INTEGER) < ?`
-  ).run(cutoff)
-  return result.changes
+  return getBackend().pruneOldUsage(maxAgeMs)
 }
 
 // --- Connectors ---

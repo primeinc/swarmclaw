@@ -6,9 +6,14 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     const { log } = await import('@/lib/server/logger')
     const isWorkerOnly = process.env.SWARMCLAW_WORKER_ONLY === '1'
+
+    // Initialize storage backend (Cosmos needs async startup to load all data into memory)
+    const { initializeStorageBackend } = await import('@/lib/server/storage')
+    await initializeStorageBackend()
+
     const { initWsServer, closeWsServer } = await import('./lib/server/ws-hub')
     const { ensureDaemonStarted } = await import('@/lib/server/runtime/daemon-state')
-    
+
     // One-time migration: backfill allKnownPeerIds on existing connector sessions
     try {
       const { backfillAllKnownPeerIds, pruneThreadConnectorMirrors } = await import('@/lib/server/connectors/session-consolidation')
@@ -43,6 +48,12 @@ export async function register() {
         await stopDaemon({ source: signal })
       } catch (err) {
         log.error(TAG, 'Failed to stop daemon during shutdown:', err)
+      }
+      try {
+        const { shutdownStorageBackend } = await import('@/lib/server/storage')
+        await shutdownStorageBackend()
+      } catch (err) {
+        log.error(TAG, 'Failed to shutdown storage backend:', err)
       }
       if (!isWorkerOnly) {
         await closeWsServer()

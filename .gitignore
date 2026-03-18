@@ -85,3 +85,18 @@ IMPROVEMENTS.md
 
 # superpowers skill docs (local only)
 /docs/superpowers/
+
+# azd environment (contains secrets)
+.azure/
+
+# playwright MCP artifacts
+.playwright-mcp/
+
+# e2e test screenshots
+e2e-*.png
+
+# Windows NUL device artifact
+NUL
+
+# Cosmos DB emulator draft (superseded by storage-backend-cosmos.ts)
+src/lib/server/storage-backend-cosmos.ts.draft
