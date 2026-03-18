@@ -18,9 +18,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/sandbox-browser-entrypoint.sh /usr/local/bin/swarmclaw-sandbox-browser
-RUN chmod +x /usr/local/bin/swarmclaw-sandbox-browser
-
-RUN useradd --create-home --shell /bin/bash sandbox
+RUN chmod +x /usr/local/bin/swarmclaw-sandbox-browser \
+    && useradd --create-home --shell /bin/bash sandbox
 USER sandbox
 WORKDIR /home/sandbox
 

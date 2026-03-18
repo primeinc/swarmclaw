@@ -1,0 +1,1106 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "3873097327798025047"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus2",
+      "metadata": {
+        "description": "Azure region"
+      }
+    },
+    "environmentName": {
+      "type": "string",
+      "defaultValue": "swarmclaw-prod",
+      "metadata": {
+        "description": "Environment name for resource naming"
+      }
+    },
+    "appImage": {
+      "type": "string",
+      "defaultValue": "mcr.microsoft.com/k8se/quickstart:latest",
+      "metadata": {
+        "description": "Container image (update after first deploy + ACR push)"
+      }
+    },
+    "enableWaf": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable Front Door + WAF (~$35/mo extra)"
+      }
+    },
+    "logRetentionDays": {
+      "type": "int",
+      "defaultValue": 90,
+      "metadata": {
+        "description": "Log retention days"
+      }
+    },
+    "cosmosDbName": {
+      "type": "string",
+      "defaultValue": "swarmclaw",
+      "metadata": {
+        "description": "Cosmos DB database name"
+      }
+    },
+    "tailscaleHostname": {
+      "type": "string",
+      "defaultValue": "swarmclaw-prod",
+      "metadata": {
+        "description": "Tailscale hostname"
+      }
+    }
+  },
+  "variables": {
+    "resourceToken": "[uniqueString(resourceGroup().id)]",
+    "tags": {
+      "environment": "[parameters('environmentName')]",
+      "managedBy": "bicep",
+      "app": "swarmclaw"
+    },
+    "openIdIssuer": "[format('{0}{1}/v2.0', environment().authentication.loginEndpoint, subscription().tenantId)]",
+    "scopeId": "2e1a5b3c-4d6e-7f8a-9b0c-1d2e3f4a5b6c"
+  },
+  "imports": {
+    "microsoftGraphV1": {
+      "provider": "MicrosoftGraph",
+      "version": "1.0.0"
+    }
+  },
+  "resources": {
+    "entraApp::fic": {
+      "import": "microsoftGraphV1",
+      "type": "Microsoft.Graph/applications/federatedIdentityCredentials@v1.0",
+      "properties": {
+        "name": "[format('{0}/msiAsFic', reference('entraApp').uniqueName)]",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ],
+        "issuer": "[variables('openIdIssuer')]",
+        "subject": "[reference('identity').principalId]"
+      },
+      "dependsOn": [
+        "entraApp",
+        "identity"
+      ]
+    },
+    "entraApp": {
+      "import": "microsoftGraphV1",
+      "type": "Microsoft.Graph/applications@v1.0",
+      "properties": {
+        "displayName": "[format('swarmclaw-{0}', parameters('environmentName'))]",
+        "uniqueName": "[format('swarmclaw-{0}', parameters('environmentName'))]",
+        "signInAudience": "AzureADMyOrg",
+        "web": {
+          "implicitGrantSettings": {
+            "enableAccessTokenIssuance": false,
+            "enableIdTokenIssuance": true
+          }
+        },
+        "api": {
+          "requestedAccessTokenVersion": 2,
+          "oauth2PermissionScopes": [
+            {
+              "id": "[variables('scopeId')]",
+              "value": "user_impersonation",
+              "type": "User",
+              "isEnabled": true,
+              "adminConsentDisplayName": "Access SwarmClaw",
+              "adminConsentDescription": "Access SwarmClaw API",
+              "userConsentDisplayName": "Access SwarmClaw",
+              "userConsentDescription": "Access SwarmClaw API"
+            }
+          ]
+        },
+        "requiredResourceAccess": [
+          {
+            "resourceAppId": "00000003-0000-0000-c000-000000000000",
+            "resourceAccess": [
+              {
+                "id": "e1fe6dd8-ba31-4d61-89e7-88639da4683d",
+                "type": "Scope"
+              },
+              {
+                "id": "7427e0e9-2fba-42fe-b0c0-848c9e6a8182",
+                "type": "Scope"
+              },
+              {
+                "id": "37f7f235-527c-4136-accd-4a02d197296e",
+                "type": "Scope"
+              },
+              {
+                "id": "14dad69e-099b-42c9-810b-d002981feec1",
+                "type": "Scope"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "entraServicePrincipal": {
+      "import": "microsoftGraphV1",
+      "type": "Microsoft.Graph/servicePrincipals@v1.0",
+      "properties": {
+        "appId": "[reference('entraApp').appId]"
+      },
+      "dependsOn": [
+        "entraApp"
+      ]
+    },
+    "identity": {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('msi-{0}', parameters('environmentName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    "logAnalytics": {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('log-{0}', parameters('environmentName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": "[parameters('logRetentionDays')]"
+      }
+    },
+    "nsg": {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('nsg-{0}', parameters('environmentName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowFrontDoorInbound",
+            "properties": {
+              "priority": 100,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "AzureFrontDoor.Backend",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRanges": [
+                "443",
+                "80"
+              ]
+            }
+          },
+          {
+            "name": "AllowAzureLoadBalancer",
+            "properties": {
+              "priority": 110,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "*",
+              "sourceAddressPrefix": "AzureLoadBalancer",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*"
+            }
+          },
+          {
+            "name": "DenyAllOtherInbound",
+            "properties": {
+              "priority": 4096,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*"
+            }
+          }
+        ]
+      }
+    },
+    "vnet": {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[format('vnet-{0}', parameters('environmentName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "snet-aca",
+            "properties": {
+              "addressPrefix": "10.0.0.0/23",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('nsg-{0}', parameters('environmentName')))]"
+              },
+              "delegations": [
+                {
+                  "name": "Microsoft.App.environments",
+                  "properties": {
+                    "serviceName": "Microsoft.App/environments"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "snet-pe",
+            "properties": {
+              "addressPrefix": "10.0.2.0/24"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "nsg"
+      ]
+    },
+    "acr": {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[format('cr{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": false
+      }
+    },
+    "acrPullRole": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', variables('resourceToken')))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', variables('resourceToken'))), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('msi-{0}', parameters('environmentName'))), '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+        "principalId": "[reference('identity').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "acr",
+        "identity"
+      ]
+    },
+    "storageAccount": {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[format('st{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    "fileService": {
+      "type": "Microsoft.Storage/storageAccounts/fileServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', format('st{0}', variables('resourceToken')), 'default')]",
+      "dependsOn": [
+        "storageAccount"
+      ]
+    },
+    "fileShare": {
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', format('st{0}', variables('resourceToken')), 'default', 'tailscale-state')]",
+      "properties": {
+        "shareQuota": 1
+      },
+      "dependsOn": [
+        "fileService"
+      ]
+    },
+    "appDataShare": {
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', format('st{0}', variables('resourceToken')), 'default', 'swarmclaw-data')]",
+      "properties": {
+        "shareQuota": 5
+      },
+      "dependsOn": [
+        "fileService"
+      ]
+    },
+    "keyVault": {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[format('kv-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "tenantId": "[subscription().tenantId]",
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "softDeleteRetentionInDays": 7
+      }
+    },
+    "kvSecretsRole": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', format('kv-{0}', variables('resourceToken')))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', format('kv-{0}', variables('resourceToken'))), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('msi-{0}', parameters('environmentName'))), '4633458b-17de-408a-b874-0445c86b69e6')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+        "principalId": "[reference('identity').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "identity",
+        "keyVault"
+      ]
+    },
+    "cosmosAccount": {
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2024-11-15",
+      "name": "[format('cosmos-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "GlobalDocumentDB",
+      "properties": {
+        "databaseAccountOfferType": "Standard",
+        "capabilities": [
+          {
+            "name": "EnableServerless"
+          }
+        ],
+        "consistencyPolicy": {
+          "defaultConsistencyLevel": "Session"
+        },
+        "locations": [
+          {
+            "locationName": "[parameters('location')]",
+            "failoverPriority": 0
+          }
+        ],
+        "backupPolicy": {
+          "type": "Continuous",
+          "continuousModeProperties": {
+            "tier": "Continuous7Days"
+          }
+        },
+        "disableLocalAuth": true,
+        "publicNetworkAccess": "Disabled",
+        "networkAclBypass": "AzureServices"
+      }
+    },
+    "cosmosDb": {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+      "apiVersion": "2024-11-15",
+      "name": "[format('{0}/{1}', format('cosmos-{0}', variables('resourceToken')), parameters('cosmosDbName'))]",
+      "properties": {
+        "resource": {
+          "id": "[parameters('cosmosDbName')]"
+        }
+      },
+      "dependsOn": [
+        "cosmosAccount"
+      ]
+    },
+    "cosmosCollections": {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-11-15",
+      "name": "[format('{0}/{1}/{2}', format('cosmos-{0}', variables('resourceToken')), parameters('cosmosDbName'), 'collections')]",
+      "properties": {
+        "resource": {
+          "id": "collections",
+          "partitionKey": {
+            "paths": [
+              "/collection"
+            ],
+            "kind": "Hash",
+            "version": 2
+          },
+          "indexingPolicy": {
+            "indexingMode": "consistent",
+            "automatic": true,
+            "includedPaths": [
+              {
+                "path": "/*"
+              }
+            ],
+            "excludedPaths": [
+              {
+                "path": "/data/*"
+              },
+              {
+                "path": "/_etag/?"
+              }
+            ]
+          },
+          "defaultTtl": -1
+        }
+      },
+      "dependsOn": [
+        "cosmosDb"
+      ]
+    },
+    "cosmosUsage": {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-11-15",
+      "name": "[format('{0}/{1}/{2}', format('cosmos-{0}', variables('resourceToken')), parameters('cosmosDbName'), 'usage')]",
+      "properties": {
+        "resource": {
+          "id": "usage",
+          "partitionKey": {
+            "paths": [
+              "/sessionId"
+            ],
+            "kind": "Hash",
+            "version": 2
+          }
+        }
+      },
+      "dependsOn": [
+        "cosmosDb"
+      ]
+    },
+    "cosmosDataRole": {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+      "apiVersion": "2024-11-15",
+      "name": "[format('{0}/{1}', format('cosmos-{0}', variables('resourceToken')), guid('data-contributor', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('msi-{0}', parameters('environmentName'))), resourceId('Microsoft.DocumentDB/databaseAccounts', format('cosmos-{0}', variables('resourceToken')))))]",
+      "properties": {
+        "principalId": "[reference('identity').principalId]",
+        "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', format('cosmos-{0}', variables('resourceToken'))))]",
+        "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', format('cosmos-{0}', variables('resourceToken')))]"
+      },
+      "dependsOn": [
+        "cosmosAccount",
+        "identity"
+      ]
+    },
+    "cosmosPrivateEndpoint": {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[format('pe-cosmos-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[reference('vnet').subnets[1].id]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "cosmos",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', format('cosmos-{0}', variables('resourceToken')))]",
+              "groupIds": [
+                "Sql"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "cosmosAccount",
+        "vnet"
+      ]
+    },
+    "cosmosDnsZone": {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "privatelink.documents.azure.com",
+      "location": "global",
+      "tags": "[variables('tags')]"
+    },
+    "cosmosDnsVnetLink": {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.documents.azure.com', 'cosmos-vnet-link')]",
+      "location": "global",
+      "properties": {
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('environmentName')))]"
+        },
+        "registrationEnabled": false
+      },
+      "dependsOn": [
+        "cosmosDnsZone",
+        "vnet"
+      ]
+    },
+    "cosmosDnsGroup": {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', format('pe-cosmos-{0}', variables('resourceToken')), 'cosmos-dns')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "cosmos",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.documents.azure.com')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "cosmosDnsZone",
+        "cosmosPrivateEndpoint"
+      ]
+    },
+    "containerAppEnv": {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[format('cae-{0}', parameters('environmentName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference('logAnalytics').customerId]",
+            "sharedKey": "[listKeys('logAnalytics', '2023-09-01').primarySharedKey]"
+          }
+        },
+        "vnetConfiguration": {
+          "infrastructureSubnetId": "[reference('vnet').subnets[0].id]",
+          "internal": false
+        },
+        "workloadProfiles": [
+          {
+            "name": "Consumption",
+            "workloadProfileType": "Consumption"
+          }
+        ]
+      },
+      "dependsOn": [
+        "logAnalytics",
+        "vnet"
+      ]
+    },
+    "envStorage": {
+      "type": "Microsoft.App/managedEnvironments/storages",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('cae-{0}', parameters('environmentName')), 'tailscale-state')]",
+      "properties": {
+        "azureFile": {
+          "accountName": "[format('st{0}', variables('resourceToken'))]",
+          "accountKey": "[listKeys('storageAccount', '2023-05-01').keys[0].value]",
+          "shareName": "tailscale-state",
+          "accessMode": "ReadWrite"
+        }
+      },
+      "dependsOn": [
+        "containerAppEnv",
+        "fileShare",
+        "storageAccount"
+      ]
+    },
+    "envAppDataStorage": {
+      "type": "Microsoft.App/managedEnvironments/storages",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('cae-{0}', parameters('environmentName')), 'swarmclaw-data')]",
+      "properties": {
+        "azureFile": {
+          "accountName": "[format('st{0}', variables('resourceToken'))]",
+          "accountKey": "[listKeys('storageAccount', '2023-05-01').keys[0].value]",
+          "shareName": "swarmclaw-data",
+          "accessMode": "ReadWrite"
+        }
+      },
+      "dependsOn": [
+        "appDataShare",
+        "containerAppEnv",
+        "storageAccount"
+      ]
+    },
+    "containerApp": {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "swarmclaw",
+      "location": "[parameters('location')]",
+      "tags": "[union(variables('tags'), createObject('azd-service-name', 'swarmclaw'))]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('msi-{0}', parameters('environmentName'))))]": {}
+        }
+      },
+      "properties": {
+        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', parameters('environmentName')))]",
+        "workloadProfileName": "Consumption",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 3456,
+            "transport": "auto",
+            "allowInsecure": false
+          },
+          "registries": [
+            {
+              "server": "[reference('acr').loginServer]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('msi-{0}', parameters('environmentName')))]"
+            }
+          ],
+          "secrets": [
+            {
+              "name": "ts-auth-key",
+              "keyVaultUrl": "[format('{0}secrets/tailscale-auth-key', reference('keyVault').vaultUri)]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('msi-{0}', parameters('environmentName')))]"
+            },
+            {
+              "name": "override-use-mi-fic-assertion-client-id",
+              "value": "[reference('identity').clientId]"
+            }
+          ]
+        },
+        "template": {
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 3,
+            "rules": [
+              {
+                "name": "http-scaling",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "50"
+                  }
+                }
+              }
+            ]
+          },
+          "containers": [
+            {
+              "name": "swarmclaw",
+              "image": "[parameters('appImage')]",
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              },
+              "env": [
+                {
+                  "name": "NODE_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "PORT",
+                  "value": "3456"
+                },
+                {
+                  "name": "HOSTNAME",
+                  "value": "0.0.0.0"
+                },
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "[reference('identity').clientId]"
+                }
+              ]
+            },
+            {
+              "name": "tailscale",
+              "image": "ghcr.io/tailscale/tailscale:latest",
+              "command": [
+                "/bin/sh"
+              ],
+              "args": [
+                "-c",
+                "export KUBERNETES_SERVICE_HOST=\"\" && /usr/local/bin/containerboot"
+              ],
+              "resources": {
+                "cpu": "[json('0.25')]",
+                "memory": "0.5Gi"
+              },
+              "env": [
+                {
+                  "name": "TS_AUTHKEY",
+                  "secretRef": "ts-auth-key"
+                },
+                {
+                  "name": "TS_HOSTNAME",
+                  "value": "[parameters('tailscaleHostname')]"
+                },
+                {
+                  "name": "TS_STATE_DIR",
+                  "value": "/var/lib/tailscale"
+                },
+                {
+                  "name": "TS_USERSPACE",
+                  "value": "true"
+                },
+                {
+                  "name": "TS_AUTH_ONCE",
+                  "value": "true"
+                },
+                {
+                  "name": "TS_EXTRA_ARGS",
+                  "value": "--advertise-exit-node"
+                }
+              ],
+              "volumeMounts": [
+                {
+                  "volumeName": "ts-state",
+                  "mountPath": "/var/lib/tailscale"
+                }
+              ]
+            }
+          ],
+          "volumes": [
+            {
+              "name": "ts-state",
+              "storageName": "tailscale-state",
+              "storageType": "AzureFile"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "acr",
+        "containerAppEnv",
+        "envStorage",
+        "identity",
+        "keyVault"
+      ]
+    },
+    "authConfig": {
+      "type": "Microsoft.App/containerApps/authConfigs",
+      "apiVersion": "2024-10-02-preview",
+      "name": "[format('{0}/{1}', 'swarmclaw', 'current')]",
+      "properties": {
+        "platform": {
+          "enabled": true
+        },
+        "globalValidation": {
+          "unauthenticatedClientAction": "RedirectToLoginPage",
+          "redirectToProvider": "azureactivedirectory",
+          "excludedPaths": [
+            "/api/daemon/health-check"
+          ]
+        },
+        "identityProviders": {
+          "azureActiveDirectory": {
+            "enabled": true,
+            "registration": {
+              "clientId": "[reference('entraApp').appId]",
+              "clientSecretSettingName": "override-use-mi-fic-assertion-client-id",
+              "openIdIssuer": "[variables('openIdIssuer')]"
+            },
+            "validation": {
+              "allowedAudiences": [
+                "[format('api://{0}', reference('entraApp').appId)]",
+                "[reference('entraApp').appId]"
+              ]
+            }
+          }
+        },
+        "httpSettings": {
+          "requireHttps": true,
+          "forwardProxy": "[if(parameters('enableWaf'), createObject('convention', 'Custom', 'customHostHeaderName', 'X-Forwarded-Host', 'customProtoHeaderName', 'X-Forwarded-Proto'), null())]"
+        }
+      },
+      "dependsOn": [
+        "containerApp",
+        "entraApp"
+      ]
+    },
+    "wafPolicy": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Network/FrontDoorWebApplicationFirewallPolicies",
+      "apiVersion": "2024-02-01",
+      "name": "[format('waf{0}', replace(parameters('environmentName'), '-', ''))]",
+      "location": "global",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_AzureFrontDoor"
+      },
+      "properties": {
+        "policySettings": {
+          "enabledState": "Enabled",
+          "mode": "Prevention",
+          "requestBodyCheck": "Enabled"
+        },
+        "customRules": {
+          "rules": [
+            {
+              "name": "RateLimitGlobal",
+              "priority": 100,
+              "ruleType": "RateLimitRule",
+              "action": "Block",
+              "rateLimitDurationInMinutes": 1,
+              "rateLimitThreshold": 200,
+              "matchConditions": [
+                {
+                  "matchVariable": "RemoteAddr",
+                  "operator": "IPMatch",
+                  "negateCondition": true,
+                  "matchValue": [
+                    "192.0.2.0/24"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "BlockBadBots",
+              "priority": 200,
+              "ruleType": "MatchRule",
+              "action": "Block",
+              "matchConditions": [
+                {
+                  "matchVariable": "RequestHeader",
+                  "selector": "User-Agent",
+                  "operator": "Contains",
+                  "matchValue": [
+                    "sqlmap",
+                    "nikto",
+                    "nmap",
+                    "masscan",
+                    "zgrab"
+                  ],
+                  "transforms": [
+                    "Lowercase"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "frontDoor": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Cdn/profiles",
+      "apiVersion": "2024-09-01",
+      "name": "[format('fd-{0}', parameters('environmentName'))]",
+      "location": "global",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_AzureFrontDoor"
+      }
+    },
+    "fdEndpoint": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Cdn/profiles/afdEndpoints",
+      "apiVersion": "2024-09-01",
+      "name": "[format('{0}/{1}', format('fd-{0}', parameters('environmentName')), 'swarmclaw')]",
+      "location": "global",
+      "properties": {
+        "enabledState": "Enabled"
+      },
+      "dependsOn": [
+        "frontDoor"
+      ]
+    },
+    "fdOriginGroup": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Cdn/profiles/originGroups",
+      "apiVersion": "2024-09-01",
+      "name": "[format('{0}/{1}', format('fd-{0}', parameters('environmentName')), 'swarmclaw-origins')]",
+      "properties": {
+        "loadBalancingSettings": {
+          "sampleSize": 4,
+          "successfulSamplesRequired": 3,
+          "additionalLatencyInMilliseconds": 50
+        },
+        "healthProbeSettings": {
+          "probePath": "/api/daemon/health-check",
+          "probeRequestType": "HEAD",
+          "probeProtocol": "Https",
+          "probeIntervalInSeconds": 100
+        }
+      },
+      "dependsOn": [
+        "frontDoor"
+      ]
+    },
+    "fdOrigin": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Cdn/profiles/originGroups/origins",
+      "apiVersion": "2024-09-01",
+      "name": "[format('{0}/{1}/{2}', format('fd-{0}', parameters('environmentName')), 'swarmclaw-origins', 'swarmclaw-aca')]",
+      "properties": {
+        "hostName": "[reference('containerApp').configuration.ingress.fqdn]",
+        "originHostHeader": "[reference('containerApp').configuration.ingress.fqdn]",
+        "httpPort": 80,
+        "httpsPort": 443,
+        "priority": 1,
+        "weight": 1000,
+        "enabledState": "Enabled",
+        "enforceCertificateNameCheck": true
+      },
+      "dependsOn": [
+        "containerApp",
+        "fdOriginGroup"
+      ]
+    },
+    "fdRoute": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Cdn/profiles/afdEndpoints/routes",
+      "apiVersion": "2024-09-01",
+      "name": "[format('{0}/{1}/{2}', format('fd-{0}', parameters('environmentName')), 'swarmclaw', 'default-route')]",
+      "properties": {
+        "originGroup": {
+          "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', format('fd-{0}', parameters('environmentName')), 'swarmclaw-origins')]"
+        },
+        "patternsToMatch": [
+          "/*"
+        ],
+        "forwardingProtocol": "HttpsOnly",
+        "httpsRedirect": "Enabled",
+        "linkToDefaultDomain": "Enabled",
+        "supportedProtocols": [
+          "Http",
+          "Https"
+        ]
+      },
+      "dependsOn": [
+        "fdEndpoint",
+        "fdOrigin",
+        "fdOriginGroup"
+      ]
+    },
+    "fdSecurityPolicy": {
+      "condition": "[parameters('enableWaf')]",
+      "type": "Microsoft.Cdn/profiles/securityPolicies",
+      "apiVersion": "2024-09-01",
+      "name": "[format('{0}/{1}', format('fd-{0}', parameters('environmentName')), 'waf-policy')]",
+      "properties": {
+        "parameters": {
+          "type": "WebApplicationFirewall",
+          "wafPolicy": {
+            "id": "[resourceId('Microsoft.Network/FrontDoorWebApplicationFirewallPolicies', format('waf{0}', replace(parameters('environmentName'), '-', '')))]"
+          },
+          "associations": [
+            {
+              "domains": [
+                {
+                  "id": "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', format('fd-{0}', parameters('environmentName')), 'swarmclaw')]"
+                }
+              ],
+              "patternsToMatch": [
+                "/*"
+              ]
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "fdEndpoint",
+        "frontDoor",
+        "wafPolicy"
+      ]
+    },
+    "cosmosDiag": {
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', format('cosmos-{0}', variables('resourceToken')))]",
+      "name": "cosmos-diag",
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('log-{0}', parameters('environmentName')))]",
+        "logs": [
+          {
+            "categoryGroup": "allLogs",
+            "enabled": true
+          }
+        ],
+        "metrics": [
+          {
+            "category": "Requests",
+            "enabled": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "cosmosAccount",
+        "logAnalytics"
+      ]
+    },
+    "kvDiag": {
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', format('kv-{0}', variables('resourceToken')))]",
+      "name": "kv-diag",
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('log-{0}', parameters('environmentName')))]",
+        "logs": [
+          {
+            "categoryGroup": "allLogs",
+            "enabled": true
+          }
+        ],
+        "metrics": [
+          {
+            "category": "AllMetrics",
+            "enabled": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "keyVault",
+        "logAnalytics"
+      ]
+    }
+  },
+  "outputs": {
+    "containerAppFqdn": {
+      "type": "string",
+      "value": "[reference('containerApp').configuration.ingress.fqdn]"
+    },
+    "containerAppUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference('containerApp').configuration.ingress.fqdn)]"
+    },
+    "frontDoorUrl": {
+      "type": "string",
+      "value": "[if(parameters('enableWaf'), format('https://{0}', reference('fdEndpoint').hostName), 'N/A')]"
+    },
+    "frontDoorId": {
+      "type": "string",
+      "value": "[if(parameters('enableWaf'), reference('frontDoor').frontDoorId, 'N/A')]"
+    },
+    "cosmosEndpoint": {
+      "type": "string",
+      "value": "[reference('cosmosAccount').documentEndpoint]"
+    },
+    "AZURE_CONTAINER_REGISTRY_ENDPOINT": {
+      "type": "string",
+      "value": "[reference('acr').loginServer]"
+    },
+    "managedIdentityClientId": {
+      "type": "string",
+      "value": "[reference('identity').clientId]"
+    },
+    "tailscaleHostname": {
+      "type": "string",
+      "value": "[parameters('tailscaleHostname')]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[format('kv-{0}', variables('resourceToken'))]"
+    },
+    "entraAppId": {
+      "type": "string",
+      "value": "[reference('entraApp').appId]"
+    },
+    "vnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('environmentName')))]"
+    }
+  }
+}

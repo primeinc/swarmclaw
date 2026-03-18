@@ -1,0 +1,6 @@
+---
+# DL3008: Pin versions in apt-get install
+# Downgraded to style — pinning apt package versions on rolling Debian base
+# images (node:22-slim) is fragile and breaks on base image updates.
+ignored:
+  - DL3008
